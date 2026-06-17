@@ -1,0 +1,45 @@
+version: '3.9'
+
+services:
+  gateway:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: sh -c "node services/gateway/src/index.js"
+    ports:
+      - "4000:4000"
+
+  trip-service:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: sh -c "node services/trip-service/src/index.js"
+    ports:
+      - "4010:4010"
+
+  booking-service:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: sh -c "node services/booking-service/src/index.js"
+    ports:
+      - "4020:4020"
+
+  ai-service:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: sh -c "node services/ai-service/src/index.js"
+    ports:
+      - "4100:4100"
+
+  mcp-server:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: sh -c "node services/mcp-server/src/index.js"

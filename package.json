@@ -1,0 +1,18 @@
+{
+  "name": "bus-ai-ticketing-project",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "services/*",
+    "workers/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace apps/web",
+    "test": "node -e \"console.log('No tests yet. Skeleton only.')\"",
+    "docker:up": "docker compose up -d --build",
+    "docker:down": "docker compose down",
+    "start:mcp": "npm run start --workspace services/mcp-server"
+  }
+}

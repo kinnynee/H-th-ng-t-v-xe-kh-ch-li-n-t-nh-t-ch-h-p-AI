@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package seat.inventory.v1;
+
+service SeatInventoryService {
+  rpc HoldSeat (HoldSeatRequest) returns (HoldSeatResponse);
+}
+
+message HoldSeatRequest {
+  string trip_id = 1;
+  string seat_id = 2;
+  string booking_code = 3;
+}
+
+message HoldSeatResponse {
+  bool success = 1;
+  string message = 2;
+  string hold_id = 3;
+}
