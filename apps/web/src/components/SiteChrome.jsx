@@ -3,7 +3,8 @@ import Link from 'next/link';
 const navItems = [
   { label: 'Trang chủ', href: '/' },
   { label: 'Tìm chuyến', href: '/#search' },
-  { label: 'Dự án', href: '/#about' },
+  { label: 'Tra cứu vé', href: '/booking/BK001' },
+  { label: 'Tài khoản', href: '/account' },
 ];
 
 export default function SiteChrome({ children }) {
@@ -23,7 +24,7 @@ export default function SiteChrome({ children }) {
       <main className="site-main">{children}</main>
 
       <footer className="site-footer">
-        <p>Frontend skeleton ban đầu. TODO: mở rộng theo nhánh của từng thành viên.</p>
+        <p>Frontend skeleton ban đầu cho Trần Trung Kiên. TODO: mở rộng theo nhánh riêng.</p>
       </footer>
     </div>
   );
