@@ -71,7 +71,5 @@ npm run start:mcp
 
 ## Trạng thái hiện tại
 
-- Chỉ là skeleton ban đầu
-- Không có API thật
-- Không có business logic phức tạp
-- Có TODO rõ ràng để phát triển tiếp theo từng nhánh
+- Dự án đã hoàn thiện phiên bản v1.0.
+- Các module chính đã được tích hợp và hoạt động ổn định, bao gồm: luồng đặt vé, quản lý hệ thống (admin dashboard), tích hợp AI Chatbot và hệ thống xử lý ngầm (workers).
