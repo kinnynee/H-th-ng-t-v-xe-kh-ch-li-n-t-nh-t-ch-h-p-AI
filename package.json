@@ -1,18 +1,29 @@
 {
-  "name": "bus-ai-ticketing-project",
+  "name": "bus-ai-ticketing-final-project",
+  "version": "1.0.0",
   "private": true,
+  "description": "He thong dat ve xe khach lien tinh tich hop AI, GraphQL, gRPC, Microservices, Redis, RabbitMQ/Kafka, Nginx va MCP.",
   "type": "module",
   "workspaces": [
     "apps/*",
+    "packages/*",
     "services/*",
-    "workers/*",
-    "packages/*"
+    "workers/*"
   ],
   "scripts": {
-    "dev": "npm run dev --workspace apps/web",
-    "test": "node -e \"console.log('No tests yet. Skeleton only.')\"",
-    "docker:up": "docker compose up -d --build",
+    "dev": "concurrently -n WEB,GQL,TRIP,SEAT,BOOKING,AI,ANALYTICS,TICKET,EMAIL -c blue,magenta,green,cyan,yellow,white,red,gray \"npm run dev -w apps/web\" \"npm run dev -w services/gateway\" \"npm run dev -w services/trip-service\" \"npm run dev -w services/seat-service\" \"npm run dev -w services/booking-service\" \"npm run dev -w services/ai-service\" \"npm run dev -w workers/analytics-worker\" \"npm run dev -w workers/ticket-worker\" \"npm run dev -w workers/email-worker\"",
+    "docker:build": "docker compose build",
+    "docker:config": "docker compose config --quiet",
     "docker:down": "docker compose down",
-    "start:mcp": "npm run start --workspace services/mcp-server"
+    "docker:logs": "docker compose logs -f",
+    "docker:up": "docker compose up --build",
+    "test": "node --test tests/*.test.js",
+    "start:mcp": "npm run start -w services/mcp-server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }
