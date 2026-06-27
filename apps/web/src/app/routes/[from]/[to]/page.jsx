@@ -1,42 +1,36 @@
 import TripCard from '../../../../components/TripCard';
+import { mockTrips, normalizeLocation } from '../../../../lib/mockTrips';
 
-const mockTrips = (from, to) => [
-  {
-    id: 'trip-001',
-    operator: 'Nhà xe Sao Mai',
-    from,
-    to,
-    departTime: '07:30',
-    arriveTime: '12:45',
-    price: 320000,
-    seatsLeft: 12,
-  },
-  {
-    id: 'trip-002',
-    operator: 'Nhà xe Hoàng Long',
-    from,
-    to,
-    departTime: '09:00',
-    arriveTime: '14:15',
-    price: 280000,
-    seatsLeft: 8,
-  },
-  {
-    id: 'trip-003',
-    operator: 'Nhà xe An Tâm',
-    from,
-    to,
-    departTime: '18:20',
-    arriveTime: '23:30',
-    price: 350000,
-    seatsLeft: 5,
-  },
-];
+function sortTrips(trips, sort) {
+  return [...trips].sort((firstTrip, secondTrip) => {
+    if (sort === 'price') {
+      return firstTrip.price - secondTrip.price;
+    }
 
-export default function RouteTripsPage({ params }) {
-  const from = decodeURIComponent(params.from || 'Điểm đi');
-  const to = decodeURIComponent(params.to || 'Điểm đến');
-  const trips = mockTrips(from, to);
+    return firstTrip.departTime.localeCompare(secondTrip.departTime);
+  });
+}
+
+function getQueryValue(value) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+export default async function RouteTripsPage({ params, searchParams }) {
+  const routeParams = await params;
+  const query = await searchParams;
+  const from = decodeURIComponent(routeParams.from || 'Điểm đi');
+  const to = decodeURIComponent(routeParams.to || 'Điểm đến');
+  const date = getQueryValue(query?.date) || '';
+  const sort = getQueryValue(query?.sort) === 'price' ? 'price' : 'time';
+
+  const filteredTrips = mockTrips.filter((trip) => {
+    const matchesFrom = normalizeLocation(trip.from) === normalizeLocation(from);
+    const matchesTo = normalizeLocation(trip.to) === normalizeLocation(to);
+    const matchesDate = date ? trip.date === date : true;
+
+    return matchesFrom && matchesTo && matchesDate;
+  });
+  const trips = sortTrips(filteredTrips, sort);
 
   return (
     <main className="page-stack">
@@ -45,14 +39,36 @@ export default function RouteTripsPage({ params }) {
         <h1>
           {from} - {to}
         </h1>
-        <p className="muted">TODO: kết nối GraphQL searchTrips sau.</p>
+        <p className="muted">{date ? `Ngày đi: ${date}` : 'Chưa chọn ngày đi'}</p>
       </section>
 
-      <section className="list-stack">
-        {trips.map((trip) => (
-          <TripCard key={trip.id} trip={trip} />
-        ))}
-      </section>
+      <form className="trip-toolbar">
+        <input type="hidden" name="date" value={date} />
+        <label>
+          Sắp xếp
+          <select name="sort" defaultValue={sort}>
+            <option value="time">Giờ đi sớm nhất</option>
+            <option value="price">Giá thấp nhất</option>
+          </select>
+        </label>
+        <button className="button button--secondary" type="submit">
+          Áp dụng
+        </button>
+      </form>
+
+      {trips.length ? (
+        <section className="list-stack">
+          {trips.map((trip) => (
+            <TripCard key={trip.id} trip={trip} />
+          ))}
+        </section>
+      ) : (
+        <section className="empty-state">
+          <p className="eyebrow">Không có chuyến phù hợp</p>
+          <h2>Chưa tìm thấy chuyến cho tuyến này</h2>
+          <p className="muted">Hãy thử đổi ngày đi hoặc kiểm tra lại điểm đi, điểm đến.</p>
+        </section>
+      )}
     </main>
   );
 }

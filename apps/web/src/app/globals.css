@@ -28,7 +28,8 @@ a {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -126,6 +127,11 @@ input {
   color: white;
 }
 
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .button--secondary {
   background: var(--surface-2);
   color: var(--text);
@@ -151,9 +157,24 @@ input {
   border-radius: 14px;
 }
 
-input:focus {
+select {
+  min-height: 42px;
+  padding: 0 40px 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+input:focus,
+select:focus {
   outline: 2px solid rgba(15, 118, 110, 0.2);
   border-color: var(--brand);
+}
+
+.field-error {
+  color: #b91c1c;
+  font-size: 0.86rem;
+  font-weight: 600;
 }
 
 .step-card,
@@ -192,6 +213,18 @@ input:focus {
 .trip-card__content {
   display: grid;
   gap: 8px;
+  flex: 1;
+}
+
+.trip-card__header {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.trip-card__header h3 {
+  margin: 0;
 }
 
 .trip-meta {
@@ -201,9 +234,113 @@ input:focus {
   color: var(--muted);
 }
 
+.seat-badge {
+  flex: 0 0 auto;
+  border: 1px solid rgba(15, 118, 110, 0.22);
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.1);
+  color: var(--brand-strong);
+  font-size: 0.9rem;
+  font-weight: 700;
+  padding: 6px 10px;
+}
+
 .detail-grid {
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   margin: 18px 0;
+}
+
+.trip-toolbar,
+.booking-summary,
+.empty-state {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+}
+
+.trip-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+  justify-content: space-between;
+  padding: 16px;
+}
+
+.trip-toolbar label {
+  min-width: min(240px, 100%);
+}
+
+.empty-state {
+  display: grid;
+  gap: 8px;
+  padding: 32px;
+  text-align: center;
+}
+
+.empty-state h1,
+.empty-state h2 {
+  margin: 0;
+}
+
+.booking-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+}
+
+.booking-summary h2 {
+  margin: 0;
+}
+
+.booking-summary div {
+  display: grid;
+  gap: 6px;
+}
+
+.passenger-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.seat-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-bottom: 14px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.seat-legend span {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.seat-dot {
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+}
+
+.seat-dot--available {
+  background: #fff;
+}
+
+.seat-dot--selected {
+  background: var(--brand);
+  border-color: var(--brand);
+}
+
+.seat-dot--booked {
+  background: #d1d5db;
 }
 
 .seat-map {
@@ -217,6 +354,7 @@ input:focus {
   border-radius: 14px;
   border: 1px solid var(--border);
   background: var(--surface-2);
+  font-weight: 700;
 }
 
 .seat--available {
@@ -224,8 +362,10 @@ input:focus {
 }
 
 .seat--selected {
-  background: rgba(15, 118, 110, 0.16);
+  background: var(--brand);
   border-color: var(--brand);
+  color: white;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.18);
 }
 
 .seat--booked {
@@ -295,6 +435,18 @@ input:focus {
   .trip-card {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .trip-card__header,
+  .trip-toolbar,
+  .booking-summary {
+    width: 100%;
+    align-items: flex-start;
+  }
+
+  .trip-card__header,
+  .booking-summary {
+    flex-direction: column;
   }
 
   .chat-widget {
