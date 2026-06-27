@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light;
   --bg: #f4f1ea;
   --surface: #ffffff;
   --surface-2: #f8f3ea;
@@ -26,15 +27,23 @@ a {
   text-decoration: none;
 }
 
+button,
+input,
+select {
+  font: inherit;
+}
+
 .site-shell {
   width: min(1120px, calc(100% - 32px));
   margin: 0 auto;
-  padding: 24px 0 80px;
+  padding: 24px 0 120px;
 }
 
 .site-header,
 .site-footer,
-.card {
+.card,
+.form-card,
+.chat-widget {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 20px;
@@ -72,7 +81,11 @@ a {
   padding: 24px 0;
 }
 
-.page-stack {
+.page-stack,
+.list-stack,
+.steps-grid,
+.detail-grid,
+.account-grid {
   display: grid;
   gap: 20px;
 }
@@ -82,7 +95,8 @@ a {
 }
 
 .hero h1,
-.card h2 {
+.card h2,
+.form-card h2 {
   margin-top: 0;
 }
 
@@ -96,7 +110,10 @@ a {
 
 .lead,
 .muted,
-.site-footer {
+.site-footer,
+.todo-note,
+.search-note,
+.seat-note {
   color: var(--muted);
 }
 
@@ -110,10 +127,335 @@ a {
   color: white;
 }
 
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.button--secondary {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.search-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  align-items: end;
+}
+
+label {
+  display: grid;
+  gap: 8px;
+  font-weight: 600;
+}
+
+input {
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+
+select {
+  min-height: 42px;
+  padding: 0 40px 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+input:focus,
+select:focus {
+  outline: 2px solid rgba(15, 118, 110, 0.2);
+  border-color: var(--brand);
+}
+
+.field-error {
+  color: #b91c1c;
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.step-card,
+.form-card,
+.trip-card {
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface-2);
+}
+
+.step-card,
+.form-card {
+  padding: 18px;
+}
+
+.step-index {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(15, 118, 110, 0.1);
+  color: var(--brand-strong);
+  font-weight: 700;
+}
+
+.trip-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 24px;
+}
+
+.trip-card__content {
+  display: grid;
+  gap: 8px;
+  flex: 1;
+}
+
+.trip-card__header {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.trip-card__header h3 {
+  margin: 0;
+}
+
+.trip-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  color: var(--muted);
+}
+
+.seat-badge {
+  flex: 0 0 auto;
+  border: 1px solid rgba(15, 118, 110, 0.22);
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.1);
+  color: var(--brand-strong);
+  font-size: 0.9rem;
+  font-weight: 700;
+  padding: 6px 10px;
+}
+
+.detail-grid {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  margin: 18px 0;
+}
+
+.trip-toolbar,
+.booking-summary,
+.empty-state {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+}
+
+.trip-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+  justify-content: space-between;
+  padding: 16px;
+}
+
+.trip-toolbar label {
+  min-width: min(240px, 100%);
+}
+
+.empty-state {
+  display: grid;
+  gap: 8px;
+  padding: 32px;
+  text-align: center;
+}
+
+.empty-state h1,
+.empty-state h2 {
+  margin: 0;
+}
+
+.booking-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+}
+
+.booking-summary h2 {
+  margin: 0;
+}
+
+.booking-summary div {
+  display: grid;
+  gap: 6px;
+}
+
+.passenger-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.seat-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-bottom: 14px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.seat-legend span {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.seat-dot {
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+}
+
+.seat-dot--available {
+  background: #fff;
+}
+
+.seat-dot--selected {
+  background: var(--brand);
+  border-color: var(--brand);
+}
+
+.seat-dot--booked {
+  background: #d1d5db;
+}
+
+.seat-map {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.seat {
+  min-height: 48px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  font-weight: 700;
+}
+
+.seat--available {
+  background: #fff;
+}
+
+.seat--selected {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: white;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.18);
+}
+
+.seat--booked {
+  background: #e5e7eb;
+  color: #9ca3af;
+  cursor: not-allowed;
+  text-decoration: line-through;
+}
+
+.chat-widget {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  width: min(340px, calc(100vw - 40px));
+  padding: 16px;
+  z-index: 20;
+}
+
+.chat-widget__header,
+.chat-widget__form {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.chat-widget__header {
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.chat-widget__messages {
+  display: grid;
+  gap: 10px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.chat-message {
+  padding: 10px 12px;
+  border-radius: 14px;
+}
+
+.chat-message--bot {
+  background: var(--surface-2);
+}
+
+.chat-message--user {
+  background: rgba(15, 118, 110, 0.12);
+  margin-left: 24px;
+}
+
+.chat-widget__form {
+  margin-top: 12px;
+}
+
+.chat-widget__form input {
+  flex: 1;
+}
+
 @media (max-width: 720px) {
   .site-header,
   .site-footer {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .trip-card {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .trip-card__header,
+  .trip-toolbar,
+  .booking-summary {
+    width: 100%;
+    align-items: flex-start;
+  }
+
+  .trip-card__header,
+  .booking-summary {
+    flex-direction: column;
+  }
+
+  .chat-widget {
+    position: static;
+    width: 100%;
+    margin-top: 24px;
+  }
+
+  .seat-map {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

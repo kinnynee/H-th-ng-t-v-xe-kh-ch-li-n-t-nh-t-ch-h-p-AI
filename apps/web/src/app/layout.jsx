@@ -1,5 +1,6 @@
 import './globals.css';
 import SiteChrome from '../components/SiteChrome';
+import ChatWidget from '../components/ChatWidget';
 
 export const metadata = {
   title: 'Hệ thống đặt vé xe khách liên tỉnh tích hợp AI',
@@ -11,6 +12,7 @@ export default function RootLayout({ children }) {
     <html lang="vi">
       <body>
         <SiteChrome>{children}</SiteChrome>
+        <ChatWidget />
       </body>
     </html>
   );
