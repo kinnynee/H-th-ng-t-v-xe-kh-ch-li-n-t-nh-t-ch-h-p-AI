@@ -1,55 +1,80 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
+import { useState } from "react";
+import { Bot, Send, X } from "lucide-react";
+import { gql } from "../lib/graphql";
 
-const initialMessages = [
-  { id: 1, role: 'bot', text: 'Xin chào, tôi là chatbot demo.' },
-  { id: 2, role: 'bot', text: 'Hãy nhập câu hỏi về chuyến đi hoặc đặt vé.' },
-];
+const ASK = `
+mutation Ask($message: String!, $bookingCode: String, $email: String) {
+  askAssistant(message: $message, bookingCode: $bookingCode, email: $email) {
+    answer
+    sources
+    toolCalls
+  }
+}`;
 
-export default function ChatWidget() {
-  const [messages, setMessages] = useState(initialMessages);
-  const [value, setValue] = useState('');
+export default function ChatWidget({ bookingCode = "", email = "" }) {
+  const [open, setOpen] = useState(false);
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [log, setLog] = useState([
+    {
+      role: "bot",
+      text: "Mình có thể tìm chuyến, trả lời chính sách hủy vé và tra cứu booking bằng mã kèm email."
+    }
+  ]);
 
-  const handleSubmit = (event) => {
-    event.preventDefault();
-    if (!value.trim()) return;
-
-    const nextMessages = [
-      ...messages,
-      { id: Date.now(), role: 'user', text: value.trim() },
-      { id: Date.now() + 1, role: 'bot', text: 'Đây là phản hồi mock. TODO: kết nối AI chatbot service sau.' },
-    ];
-
-    setMessages(nextMessages);
-    setValue('');
-    // TODO: Kết nối AI chatbot service sau.
-  };
+  async function send() {
+    const text = message.trim();
+    if (!text || busy) return;
+    setMessage("");
+    setLog((items) => [...items, { role: "user", text }]);
+    setBusy(true);
+    try {
+      const data = await gql(ASK, { message: text, bookingCode, email });
+      const suffix = data.askAssistant.sources.length ? `\nNguồn: ${data.askAssistant.sources.join(", ")}` : "";
+      setLog((items) => [...items, { role: "bot", text: `${data.askAssistant.answer}${suffix}` }]);
+    } catch (error) {
+      setLog((items) => [...items, { role: "bot", text: error.message }]);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
-    <aside className="chat-widget" aria-label="Chat hỗ trợ">
-      <div className="chat-widget__header">
-        <strong>Chat hỗ trợ</strong>
-        <span>Mock</span>
-      </div>
-      <div className="chat-widget__messages">
-        {messages.map((message) => (
-          <div key={message.id} className={`chat-message chat-message--${message.role}`}>
-            {message.text}
+    <>
+      {open && (
+        <section className="chat-box" aria-label="AI chatbot">
+          <div className="panel-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <strong>Trợ lý AI</strong>
+            <button className="icon-button" onClick={() => setOpen(false)} aria-label="Đóng chat">
+              <X size={18} />
+            </button>
           </div>
-        ))}
-      </div>
-      <form className="chat-widget__form" onSubmit={handleSubmit}>
-        <input
-          type="text"
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-          placeholder="Nhập câu hỏi..."
-        />
-        <button className="button" type="submit">
-          Gửi
-        </button>
-      </form>
-    </aside>
+          <div className="chat-log">
+            {log.map((item, index) => (
+              <div className={`chat-message ${item.role}`} key={`${item.role}-${index}`}>
+                {item.text}
+              </div>
+            ))}
+          </div>
+          <div className="panel-body" style={{ display: "grid", gridTemplateColumns: "1fr 44px", gap: 8 }}>
+            <input
+              className="input"
+              value={message}
+              onChange={(event) => setMessage(event.target.value)}
+              onKeyDown={(event) => event.key === "Enter" && send()}
+              placeholder="Tối mai có xe Sài Gòn đi Đà Lạt không?"
+            />
+            <button className="icon-button" onClick={send} disabled={busy} aria-label="Gửi">
+              <Send size={18} />
+            </button>
+          </div>
+        </section>
+      )}
+      <button className="primary-button chat-fab" onClick={() => setOpen((value) => !value)}>
+        <Bot size={18} /> Chat
+      </button>
+    </>
   );
 }

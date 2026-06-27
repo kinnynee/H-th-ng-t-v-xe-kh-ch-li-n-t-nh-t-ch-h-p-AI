@@ -1,5 +1,17 @@
 {
-  "name": "shared",
+  "name": "@bus-ai/shared",
+  "version": "1.0.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "exports": {
+    "./seed": "./src/seed.js",
+    "./cache": "./src/cache.js",
+    "./broker": "./src/broker.js",
+    "./policy": "./src/policy.js"
+  },
+  "dependencies": {
+    "amqplib": "^0.10.5",
+    "kafkajs": "^2.2.4",
+    "redis": "^4.7.0"
+  }
 }

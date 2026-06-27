@@ -1,31 +1,34 @@
-import Link from 'next/link';
-
-const navItems = [
-  { label: 'Trang chủ', href: '/' },
-  { label: 'Tìm chuyến', href: '/#search' },
-  { label: 'Tra cứu vé', href: '/booking/BK001' },
-  { label: 'Tài khoản', href: '/account' },
-];
+import Link from "next/link";
+import { BarChart3, BusFront, Search, Ticket, User } from "lucide-react";
 
 export default function SiteChrome({ children }) {
   return (
-    <div className="site-shell">
-      <header className="site-header">
-        <strong>Hệ thống đặt vé xe khách liên tỉnh tích hợp AI</strong>
-        <nav className="site-nav" aria-label="Điều hướng chính">
-          {navItems.map((item) => (
-            <Link key={item.label} href={item.href}>
-              {item.label}
+    <div className="app-shell">
+      <header className="topbar">
+        <div className="topbar-inner">
+          <Link className="brand" href="/">
+            <span className="brand-mark">
+              <BusFront size={20} />
+            </span>
+            <span>Vé xe liên tỉnh AI</span>
+          </Link>
+          <nav className="nav">
+            <Link href="/">
+              <Search size={16} /> Tìm chuyến
             </Link>
-          ))}
-        </nav>
+            <Link href="/booking/demo">
+              <Ticket size={16} /> Tra cứu vé
+            </Link>
+            <Link href="/account">
+              <User size={16} /> Tài khoản
+            </Link>
+            <Link href="/admin">
+              <BarChart3 size={16} /> Admin
+            </Link>
+          </nav>
+        </div>
       </header>
-
-      <main className="site-main">{children}</main>
-
-      <footer className="site-footer">
-        <p>Frontend skeleton ban đầu cho Trần Trung Kiên. TODO: mở rộng theo nhánh riêng.</p>
-      </footer>
+      {children}
     </div>
   );
 }
