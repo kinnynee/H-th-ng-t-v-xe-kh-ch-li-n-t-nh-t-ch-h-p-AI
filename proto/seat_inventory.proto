@@ -1,19 +1,81 @@
 syntax = "proto3";
 
-package seat.inventory.v1;
+package bus.seat.v1;
 
 service SeatInventoryService {
-  rpc HoldSeat (HoldSeatRequest) returns (HoldSeatResponse);
+  rpc GetSeatMap(GetSeatMapRequest) returns (GetSeatMapResponse);
+  rpc HoldSeats(HoldSeatsRequest) returns (HoldSeatsResponse);
+  rpc ConfirmSeats(ConfirmSeatsRequest) returns (ConfirmSeatsResponse);
+  rpc ReleaseSeats(ReleaseSeatsRequest) returns (ReleaseSeatsResponse);
+  rpc BlockSeats(BlockSeatsRequest) returns (BlockSeatsResponse);
 }
 
-message HoldSeatRequest {
+message GetSeatMapRequest {
   string trip_id = 1;
-  string seat_id = 2;
-  string booking_code = 3;
 }
 
-message HoldSeatResponse {
-  bool success = 1;
+message Seat {
+  string id = 1;
+  string label = 2;
+  int32 floor = 3;
+  string status = 4;
+  int32 hold_expires_in = 5;
+  string hold_token = 6;
+}
+
+message GetSeatMapResponse {
+  string trip_id = 1;
+  repeated Seat seats = 2;
+}
+
+message HoldSeatsRequest {
+  string trip_id = 1;
+  repeated string seat_ids = 2;
+  string customer_email = 3;
+  string idempotency_key = 4;
+  int32 ttl_seconds = 5;
+}
+
+message HoldSeatsResponse {
+  bool ok = 1;
   string message = 2;
-  string hold_id = 3;
+  string hold_token = 3;
+  int32 expires_in = 4;
+  repeated Seat seats = 5;
+}
+
+message ConfirmSeatsRequest {
+  string trip_id = 1;
+  repeated string seat_ids = 2;
+  string hold_token = 3;
+  string booking_code = 4;
+}
+
+message ConfirmSeatsResponse {
+  bool ok = 1;
+  string message = 2;
+  repeated Seat seats = 3;
+}
+
+message ReleaseSeatsRequest {
+  string trip_id = 1;
+  repeated string seat_ids = 2;
+  string hold_token = 3;
+}
+
+message ReleaseSeatsResponse {
+  bool ok = 1;
+  string message = 2;
+}
+
+message BlockSeatsRequest {
+  string trip_id = 1;
+  repeated string seat_ids = 2;
+  bool blocked = 3;
+}
+
+message BlockSeatsResponse {
+  bool ok = 1;
+  string message = 2;
+  repeated Seat seats = 3;
 }

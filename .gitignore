@@ -1,8 +1,11 @@
-node_modules
-.next
+node_modules/
+.next/
+dist/
+coverage/
 .env
+.env.local
+npm-debug.log*
+tmp/
+data/generated-tickets/
+data/email-log.jsonl
 *.log
-tmp
-dist
-coverage
-.DS_Store
