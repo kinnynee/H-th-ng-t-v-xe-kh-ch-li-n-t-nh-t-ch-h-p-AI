@@ -17,6 +17,8 @@
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f",
     "docker:up": "docker compose up --build",
+    "db:migrate": "node scripts/db-tasks.js migrate",
+    "db:seed": "node scripts/db-tasks.js seed",
     "test": "node --test tests/*.test.js",
     "start:mcp": "npm run start -w services/mcp-server"
   },
