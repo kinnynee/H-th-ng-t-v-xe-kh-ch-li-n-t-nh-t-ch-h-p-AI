@@ -19,6 +19,62 @@ export async function gql(query, variables = {}) {
   return payload.data;
 }
 
+/**
+ * GraphQL-over-SSE subscription used by the seat map. Yoga emits a `next`
+ * event whenever another booking action changes a trip's inventory.
+ */
+export function subscribeToSeatChanges(tripId, onChange, onError = () => {}) {
+  const controller = new AbortController();
+  const query = `subscription SeatChanged($tripId: ID!) {
+    seatChanged(tripId: $tripId) {
+      tripId message
+      seats { id label floor status holdExpiresIn }
+    }
+  }`;
+
+  (async () => {
+    try {
+      const response = await fetch(getGraphQLEndpoint(), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "text/event-stream"
+        },
+        body: JSON.stringify({ query, variables: { tripId } }),
+        signal: controller.signal,
+        cache: "no-store"
+      });
+      if (!response.ok || !response.body) throw new Error("Seat subscription is unavailable");
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (!controller.signal.aborted) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const frames = buffer.split(/\r?\n\r?\n/);
+        buffer = frames.pop() ?? "";
+        for (const frame of frames) {
+          const data = frame
+            .split(/\r?\n/)
+            .filter((line) => line.startsWith("data:"))
+            .map((line) => line.slice(5).trim())
+            .join("\n");
+          if (!data) continue;
+          const payload = JSON.parse(data);
+          if (payload.errors?.length) throw new Error(payload.errors.map((item) => item.message).join("\n"));
+          if (payload.data?.seatChanged) onChange(payload.data.seatChanged);
+        }
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) onError(error);
+    }
+  })();
+
+  return () => controller.abort();
+}
+
 export function money(value) {
   return `${Number(value ?? 0).toLocaleString("vi-VN")}đ`;
 }

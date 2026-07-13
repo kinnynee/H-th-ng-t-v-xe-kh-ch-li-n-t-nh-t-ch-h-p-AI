@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { Armchair, CalendarDays, CheckCircle2, CreditCard, MapPin, RefreshCw, Ticket, Timer, UserCheck } from "lucide-react";
 import ChatWidget from "../../../components/ChatWidget";
 import SiteChrome from "../../../components/SiteChrome";
-import { gql, money, shortDateTime } from "../../../lib/graphql";
+import { gql, money, shortDateTime, subscribeToSeatChanges } from "../../../lib/graphql";
 
 const TRIP = `
 query Trip($id: ID!) {
@@ -72,6 +72,16 @@ export default function TripDetail() {
   useEffect(() => {
     load().catch((err) => setError(err.message));
   }, [tripId]);
+
+  useEffect(() => subscribeToSeatChanges(
+    tripId,
+    (event) => setTrip((current) => current ? {
+      ...current,
+      seats: event.seats,
+      availableSeats: event.seats.filter((seat) => seat.status === "AVAILABLE").length
+    } : current),
+    () => null
+  ), [tripId]);
 
   useEffect(() => {
     if (!hold?.ok || holdRemaining <= 0) return;
