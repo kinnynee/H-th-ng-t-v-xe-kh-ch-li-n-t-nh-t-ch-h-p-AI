@@ -5,6 +5,15 @@ import cors from "cors";
 import grpc from "@grpc/grpc-js";
 import protoLoader from "@grpc/proto-loader";
 import { publishKafka, publishRabbit } from "@bus-ai/shared/broker";
+import { connectPostgres } from "@bus-ai/shared/postgres";
+import { bindGrpcServer, createServiceGrpcServer } from "@bus-ai/shared/grpc";
+import { demoUsers } from "./demo-users.js";
+import {
+  loadBookingRepository,
+  saveBooking,
+  saveUser
+} from "./repository.js";
+import { createHealthCheck } from "./health.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const protoPath = path.resolve(__dirname, "../../../proto/seat_inventory.proto");
@@ -26,30 +35,14 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const bookings = new Map();
-const users = new Map([
-  ["admin-1", { id: "admin-1", email: "admin@bus.local", password: "admin123", role: "ADMIN", name: "Admin Demo", savedPassengers: [] }],
-  ["staff-1", { id: "staff-1", email: "staff@bus.local", password: "staff123", role: "STAFF", name: "Check-in Staff", savedPassengers: [] }],
-  [
-    "customer-1",
-    {
-      id: "customer-1",
-      email: "customer@bus.local",
-      password: "customer123",
-      role: "CUSTOMER",
-      name: "Customer Demo",
-      savedPassengers: [
-        {
-          id: "passenger-1",
-          fullName: "Nguyễn Văn An",
-          phone: "0909000000",
-          email: "customer@bus.local",
-          documentId: "CCCD001"
-        }
-      ]
-    }
-  ]
-]);
+let bookings = new Map();
+let users = new Map(demoUsers.map((user) => [user.id, structuredClone(user)]));
+const database = await connectPostgres(process.env.DATABASE_URL, "booking-service");
+if (database) {
+  const stored = await loadBookingRepository(database);
+  bookings = stored.bookings;
+  users = stored.users;
+}
 const tripServiceUrl = process.env.TRIP_SERVICE_URL || "http://localhost:4010";
 const publicBookingUrl = process.env.PUBLIC_BOOKING_URL || "http://localhost:4020";
 
@@ -201,6 +194,10 @@ function rememberPassengers(userId, passengers) {
 }
 
 function schedulePendingExpiry(booking) {
+  if (booking._expiryTimerScheduled || booking.status !== "PENDING_PAYMENT") return;
+  booking._expiryTimerScheduled = true;
+  const expiresAt = new Date(booking.createdAt).getTime() + 15 * 60 * 1000;
+  const delay = Math.max(0, expiresAt - Date.now());
   setTimeout(async () => {
     const current = bookings.get(booking.code);
     if (!current || current.status !== "PENDING_PAYMENT") return;
@@ -211,12 +208,30 @@ function schedulePendingExpiry(booking) {
     }).catch(() => null);
     current.status = "EXPIRED";
     current.updatedAt = new Date().toISOString();
+    await saveBooking(database, current);
     await publishKafka("booking-events", "BookingExpired", publicBooking(current));
-  }, 15 * 60 * 1000);
+  }, delay);
 }
 
-app.get("/health", (_req, res) => {
-  res.json({ ok: true, service: "booking-service", bookings: bookings.size });
+for (const booking of bookings.values()) schedulePendingExpiry(booking);
+
+const operationalHealth = createHealthCheck({
+  database,
+  bookings,
+  users,
+  seatGrpcTarget: process.env.SEAT_GRPC_URL || "localhost:50051"
+});
+
+app.get("/live", (_req, res) => {
+  res.json({ ok: true, service: "booking-service", status: "LIVE" });
+});
+app.get("/ready", async (_req, res) => {
+  const health = await operationalHealth();
+  res.status(health.ok ? 200 : 503).json({ service: "booking-service", ...health });
+});
+app.get("/health", async (_req, res) => {
+  const health = await operationalHealth();
+  res.status(health.ok ? 200 : 503).json({ service: "booking-service", ...health });
 });
 
 app.get("/tickets/:code.html", (req, res) => {
@@ -285,7 +300,11 @@ app.post("/bookings", async (req, res) => {
       updatedAt: new Date().toISOString()
     };
     bookings.set(code, booking);
-    if (booking.userId) rememberPassengers(booking.userId, passengers);
+    if (booking.userId) {
+      rememberPassengers(booking.userId, passengers);
+      await saveUser(database, users.get(booking.userId));
+    }
+    await saveBooking(database, booking);
     schedulePendingExpiry(booking);
     await publishKafka("booking-events", "BookingCreated", publicBooking(booking));
     res.status(201).json({ booking: publicBooking(booking) });
@@ -326,6 +345,7 @@ app.post("/bookings/:code/pay", async (req, res) => {
     }).catch(() => null);
     booking.status = "PAYMENT_FAILED";
     booking.updatedAt = new Date().toISOString();
+    await saveBooking(database, booking);
     await publishKafka("payment-events", "PaymentFailed", publicBooking(booking));
     return res.json({ booking: publicBooking(booking) });
   }
@@ -348,6 +368,7 @@ app.post("/bookings/:code/pay", async (req, res) => {
     qrPayload: `${booking.code}-${passenger.seatId}`,
     issuedAt: booking.paidAt
   }));
+  await saveBooking(database, booking);
 
   const eventPayload = publicBooking(booking);
   await publishRabbit("booking.paid", eventPayload, "booking.paid");
@@ -360,8 +381,11 @@ app.post("/bookings/:code/cancel", async (req, res) => {
   const booking = bookings.get(req.params.code);
   if (!booking) return res.status(404).json({ error: "Booking not found" });
   if (req.body.email && req.body.email !== booking.customerEmail) return res.status(403).json({ error: "Email does not match this booking" });
-  if (["CHECKED_IN", "COMPLETED", "CANCELLED"].includes(booking.status)) {
+  if (["CHECKED_IN", "COMPLETED", "CANCELLED", "EXPIRED", "PAYMENT_FAILED"].includes(booking.status)) {
     return res.status(409).json({ error: `Cannot cancel booking in ${booking.status}` });
+  }
+  if (Date.parse(booking.departureTime) <= Date.now()) {
+    return res.status(409).json({ error: "Cannot cancel a booking after the trip has departed" });
   }
   await grpcCall("releaseSeats", {
     tripId: booking.tripId,
@@ -371,6 +395,7 @@ app.post("/bookings/:code/cancel", async (req, res) => {
   booking.status = "CANCELLED";
   booking.cancelledAt = new Date().toISOString();
   booking.updatedAt = booking.cancelledAt;
+  await saveBooking(database, booking);
   await publishKafka("booking-events", "BookingCancelled", publicBooking(booking));
   res.json({ booking: publicBooking(booking) });
 });
@@ -387,6 +412,7 @@ app.post("/checkin", async (req, res) => {
   booking.status = "CHECKED_IN";
   booking.checkedInAt = new Date().toISOString();
   booking.updatedAt = booking.checkedInAt;
+  await saveBooking(database, booking);
   await publishKafka("booking-events", "PassengerCheckedIn", publicBooking(booking));
   res.json({ booking: publicBooking(booking) });
 });
@@ -404,13 +430,14 @@ app.post("/admin/block-seats", async (req, res) => {
   }
 });
 
-app.post("/auth/register", (req, res) => {
+app.post("/auth/register", async (req, res) => {
   const { email, password, name } = req.body;
   if (!email || !password || !name) return res.status(400).json({ error: "Name, email and password are required" });
   if (findUserByEmail(email)) return res.status(409).json({ error: "Email already exists" });
   const id = `customer-${Date.now()}`;
   const user = { id, email, password, role: "CUSTOMER", name, savedPassengers: [] };
   users.set(id, user);
+  await saveUser(database, user);
   res.status(201).json({ user: publicUser(user) });
 });
 
@@ -419,6 +446,14 @@ app.post("/auth/login", (req, res) => {
   const user = findUserByEmail(email);
   if (user && user.password === password) return res.json({ user: publicUser(user) });
   res.status(401).json({ error: "Invalid credentials" });
+});
+
+app.post("/auth/admin-login", (req, res) => {
+  const { email, password } = req.body;
+  const user = findUserByEmail(email);
+  if (!user || user.password !== password) return res.status(401).json({ error: "Invalid credentials" });
+  if (!["ADMIN", "STAFF"].includes(user.role)) return res.status(403).json({ error: "Admin or staff role is required" });
+  res.json({ user: publicUser(user) });
 });
 
 app.get("/users/:id/bookings", (req, res) => {
@@ -434,7 +469,7 @@ app.get("/users/:id/passengers", (req, res) => {
   res.json({ passengers: user.savedPassengers });
 });
 
-app.post("/users/:id/passengers", (req, res) => {
+app.post("/users/:id/passengers", async (req, res) => {
   const user = users.get(req.params.id);
   if (!user) return res.status(404).json({ error: "User not found" });
   const passenger = {
@@ -445,17 +480,39 @@ app.post("/users/:id/passengers", (req, res) => {
     documentId: req.body.documentId ?? ""
   };
   user.savedPassengers.push(passenger);
+  await saveUser(database, user);
   res.status(201).json({ passenger });
 });
 
-app.delete("/users/:id/passengers/:passengerId", (req, res) => {
+app.delete("/users/:id/passengers/:passengerId", async (req, res) => {
   const user = users.get(req.params.id);
   if (!user) return res.status(404).json({ error: "User not found" });
   user.savedPassengers = user.savedPassengers.filter((passenger) => passenger.id !== req.params.passengerId);
+  await saveUser(database, user);
   res.json({ ok: true });
 });
 
+const grpcServer = createServiceGrpcServer({
+  serviceName: "booking-service",
+  health: operationalHealth
+});
+await bindGrpcServer(grpcServer, process.env.BOOKING_GRPC_BIND || "0.0.0.0:50053", "booking-service");
+
 const port = Number(process.env.PORT || 4020);
-app.listen(port, () => {
+const httpServer = app.listen(port, () => {
   console.log(`[booking-service] listening on http://localhost:${port}`);
 });
+
+let shuttingDown = false;
+function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  const force = setTimeout(() => {
+    grpcServer.forceShutdown();
+    process.exit(1);
+  }, 10_000);
+  force.unref();
+  grpcServer.tryShutdown(() => httpServer.close(() => process.exit(0)));
+}
+process.once("SIGTERM", shutdown);
+process.once("SIGINT", shutdown);
