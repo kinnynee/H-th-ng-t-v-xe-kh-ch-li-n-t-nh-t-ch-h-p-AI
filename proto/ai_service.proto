@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package bus.ai.v1;
+
+service ChatService {
+  rpc Chat (ChatRequest) returns (ChatResponse);
+  rpc Health (HealthRequest) returns (HealthResponse);
+}
+
+message ChatRequest {
+  string message = 1;
+}
+
+message ChatResponse {
+  string reply = 1;
+  string action = 2;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  bool ok = 1;
+  string service = 2;
+  string mode = 3;
+}

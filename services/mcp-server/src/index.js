@@ -59,6 +59,13 @@ server.tool("get_popular_routes", {}, async () => {
   return textContent(summary.popularRoutes);
 });
 
+server.resource("popular_routes", "bus://routes/popular", async (uri) => {
+  const summary = await requestJSON(`${analyticsUrl}/summary`);
+  return {
+    contents: [{ uri: uri.href, text: JSON.stringify(summary.popularRoutes, null, 2) }]
+  };
+});
+
 server.resource("cancellation_policy", "bus://policy/cancellation", async (uri) => ({
   contents: [{ uri: uri.href, text: cancellationPolicy }]
 }));

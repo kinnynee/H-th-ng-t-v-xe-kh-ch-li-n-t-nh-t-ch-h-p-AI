@@ -8,7 +8,8 @@ export function fold(value) {
   return String(value ?? "")
     .toLocaleLowerCase("vi-VN")
     .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "");
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/đ/g, "d");
 }
 
 /**

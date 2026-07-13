@@ -36,8 +36,10 @@ async function answerTripSearch(message) {
 }
 
 /**
- * Fallback khi không có API key hoặc AI SDK lỗi.
- * Xử lý bằng rule-based: phát hiện keyword → trả lời cứng.
+ * Fallback AI (Rule-based Assistant)
+ * Được gọi khi không có API key (ví dụ: môi trường dev local không có khóa) hoặc khi AI SDK bị lỗi (timeout, rate limit).
+ * Xử lý bằng rule-based: Dùng `fold` để loại bỏ dấu tiếng Việt, sau đó kiểm tra keyword (chuyến, xe, mấy giờ...)
+ * để trả lời cứng theo các chính sách (policy) như hoàn hủy, check-in, hoặc tra cứu trực tiếp qua tripService.
  */
 async function fallbackAssistant({ message, bookingCode, email }) {
   const text = fold(message);
@@ -45,7 +47,7 @@ async function fallbackAssistant({ message, bookingCode, email }) {
   const toolCalls = [];
 
   // Hỏi về chính sách hủy vé / đổi vé / hoàn tiền
-  if (text.includes("huy") || text.includes("doi ve") || text.includes("hoan tien")) {
+  if (/\bhuy\b/.test(text) || text.includes("doi ve") || text.includes("hoan tien")) {
     sources.push("bus://policy/cancellation");
     return {
       answer: `Theo chính sách hủy vé nội bộ: hủy trước 12 tiếng có thể được hoàn 100% tùy tuyến; sau khi xe khởi hành hoặc vé đã check-in thì không hoàn tiền.`,
@@ -66,6 +68,13 @@ async function fallbackAssistant({ message, bookingCode, email }) {
 
   // Tra cứu booking
   if (text.includes("booking") || bookingCode) {
+    if (!email || !bookingCode) {
+      return {
+        answer: "Để tra cứu thông tin, vui lòng cung cấp cả mã booking và email đặt vé của bạn.",
+        sources,
+        toolCalls
+      };
+    }
     toolCalls.push("getBookingStatus");
     const status = await getBookingStatus({ bookingCode, email });
     if (status.error) return { answer: status.error, sources, toolCalls };
@@ -117,18 +126,30 @@ async function fallbackAssistant({ message, bookingCode, email }) {
  * Ưu tiên dùng AI SDK (OpenAI) nếu có API key, ngược lại fallback rule-based.
  */
 export async function aiSdkAssistant(input) {
-  if (!config.openaiApiKey) return fallbackAssistant(input);
+  if (!config.githubModelsToken && !config.openaiApiKey) return fallbackAssistant(input);
   if (isTripSearchIntent(input.message)) {
     return answerTripSearch(input.message);
   }
   try {
-    const [{ generateText, tool }, { openai }, { z }] = await Promise.all([
+    const [{ generateText, tool }, { z }] = await Promise.all([
       import("ai"),
-      import("@ai-sdk/openai"),
       import("zod")
     ]);
+    
+    let model;
+    if (config.githubModelsToken) {
+      const { busAdvisorChatModel } = await import("./githubModels.js");
+      model = busAdvisorChatModel;
+    } else {
+      const { openai } = await import("@ai-sdk/openai");
+      model = openai(config.openaiModel);
+    }
+
     const result = await generateText({
-      model: openai(config.openaiModel),
+      model: model,
+      // System Prompt & Policy:
+      // Các chính sách (cancellationPolicy, checkinPolicy) được nhúng trực tiếp vào system prompt
+      // để AI nắm được luật của hệ thống (ví dụ: hoàn 100% trước 12 tiếng) và tự động trả lời đúng quy định.
       system: `${assistantSystemPrompt}\n${cancellationPolicy}\n${checkinPolicy}`,
       prompt: input.message,
       maxSteps: 3,
