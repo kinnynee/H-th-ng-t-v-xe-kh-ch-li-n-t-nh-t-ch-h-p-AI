@@ -1,8 +1,13 @@
 {
   "name": "ticket-worker",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "node --watch src/index.js",
     "start": "node src/index.js"
+  },
+  "dependencies": {
+    "@bus-ai/shared": "1.0.0"
   }
 }
