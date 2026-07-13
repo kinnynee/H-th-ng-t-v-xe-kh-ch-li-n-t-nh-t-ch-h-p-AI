@@ -14,9 +14,14 @@ function stateKey(tripId, seatId) {
   return `${tripId}:${seatId}`;
 }
 
-export function createSeatInventory({ cache = createMemoryTTLStore(), trips = buildTrips() } = {}) {
-  const booked = new Map();
-  const blocked = new Set();
+export function createSeatInventory({
+  cache = createMemoryTTLStore(),
+  trips = buildTrips(),
+  initialState = {},
+  persistState = async () => {}
+} = {}) {
+  const booked = initialState.booked ?? new Map();
+  const blocked = initialState.blocked ?? new Set();
 
   function getTrip(tripId) {
     return trips.find((trip) => trip.id === tripId) ?? { id: tripId, seatCount: 34 };
@@ -124,6 +129,7 @@ export function createSeatInventory({ cache = createMemoryTTLStore(), trips = bu
       booked.set(stateKey(tripId, seatId), { bookingCode, confirmedAt: new Date().toISOString() });
       await cache.del(holdKey(tripId, seatId));
     }
+    await persistState({ booked, blocked });
     const latest = await getSeatMap(tripId);
     return { ok: true, message: "Đã xác nhận ghế.", seats: latest.seats };
   }
@@ -139,6 +145,7 @@ export function createSeatInventory({ cache = createMemoryTTLStore(), trips = bu
         booked.delete(key);
       }
     }
+    await persistState({ booked, blocked });
     return { ok: true, message: "Đã giải phóng ghế." };
   }
 
@@ -153,6 +160,7 @@ export function createSeatInventory({ cache = createMemoryTTLStore(), trips = bu
         blocked.delete(key);
       }
     }
+    await persistState({ booked, blocked });
     const latest = await getSeatMap(tripId);
     return { ok: true, message: shouldBlock ? "Đã khóa ghế." : "Đã mở khóa ghế.", seats: latest.seats };
   }
