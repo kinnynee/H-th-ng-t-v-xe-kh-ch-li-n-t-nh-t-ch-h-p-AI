@@ -1,20 +1,15 @@
-import http from 'node:http';
+import express from "express";
+import cors from "cors";
+import config from "./config/env.js";
+import chatRoutes from "./routes/chatRoutes.js";
 
-const port = Number(process.env.AI_SERVICE_PORT || 4100);
+const app = express();
+app.use(cors());
+app.use(express.json());
 
-const server = http.createServer((request, response) => {
-  if (request.url === '/health') {
-    response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    response.end(JSON.stringify({ service: 'ai-service', status: 'ok' }));
-    return;
-  }
+// Mount tất cả routes
+app.use(chatRoutes);
 
-  response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-  response.end(JSON.stringify({ service: 'ai-service', status: 'ready' }));
+app.listen(config.port, () => {
+  console.log(`[ai-service] listening on http://localhost:${config.port}`);
 });
-
-server.listen(port, () => {
-  console.log(`ai-service placeholder listening on ${port}`);
-});
-
-// TODO: Bổ sung chatbot AI sau.
