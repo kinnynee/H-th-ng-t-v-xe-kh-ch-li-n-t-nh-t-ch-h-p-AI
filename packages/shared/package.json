@@ -1,5 +1,12 @@
 {
-  "name": "shared",
+  "name": "@bus-ai/shared",
+  "version": "1.0.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "exports": {
+    "./seed": "./src/seed.js",
+    "./cache": "./src/cache.js",
+    "./broker": "./src/broker.js",
+    "./policy": "./src/policy.js"
+  }
 }

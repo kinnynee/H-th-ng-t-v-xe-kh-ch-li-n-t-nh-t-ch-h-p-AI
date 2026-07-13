@@ -26,6 +26,14 @@ flowchart LR
   M --> AN
 ```
 
+### Ảnh minh họa
+
+![Admin Dashboard](docs/admin_dashboard.png)
+*Admin Dashboard UI với báo cáo doanh thu và bảng điều khiển.*
+
+![Chatbot UI](docs/chatbot_ui.png)
+*Giao diện Chatbot AI hỗ trợ đặt vé và tra cứu thông tin.*
+
 ## Chức năng chính
 
 - Tìm chuyến theo điểm đi, điểm đến, ngày đi; lọc theo giờ, giá, nhà xe, loại xe, số ghế còn lại.
@@ -56,6 +64,20 @@ Các cổng mặc định:
 - Seat gRPC: `localhost:50051`
 
 Redis/RabbitMQ/Kafka là tùy chọn khi chạy `npm run dev`; nếu chưa bật hạ tầng, service dùng fallback in-memory và ghi log để demo vẫn chạy.
+
+### Chạy từng service riêng lẻ
+
+Bạn có thể sử dụng tính năng workspace của npm để chạy độc lập từng phần của hệ thống:
+
+- **Web Frontend (Next.js):** `npm run dev -w apps/web`
+- **GraphQL Gateway:** `npm run dev -w services/gateway`
+- **Trip Service:** `npm run dev -w services/trip-service`
+- **Seat Service:** `npm run dev -w services/seat-service`
+- **Booking Service:** `npm run dev -w services/booking-service`
+- **AI Service:** `npm run dev -w services/ai-service`
+- **Analytics Worker:** `npm run dev -w workers/analytics-worker`
+- **Ticket Worker:** `npm run dev -w workers/ticket-worker`
+- **Email Worker:** `npm run dev -w workers/email-worker`
 
 ## Chạy đủ hạ tầng bằng Docker
 

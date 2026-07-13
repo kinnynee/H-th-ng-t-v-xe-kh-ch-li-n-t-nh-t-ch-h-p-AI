@@ -125,10 +125,12 @@ export default function AdminPage() {
   });
   const [ops, setOps] = useState({ tripId: "", seatIds: "A01", codeOrTicket: "" });
   const [tripBookings, setTripBookings] = useState([]);
-  const [message, setMessage] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
 
   async function load() {
-    const result = await gql(ADMIN, { input: {} });
+    setIsLoading(true);
+    try {
+      const result = await gql(ADMIN, { input: {} });
     setData(result);
     setTripForm((current) => ({
       ...current,
@@ -137,6 +139,11 @@ export default function AdminPage() {
       vehicleId: current.vehicleId || result.catalog.vehicles[0]?.id || "",
     }));
     setOps((current) => ({ ...current, tripId: current.tripId || result.searchTrips.trips[0]?.id || "" }));
+    } catch (err) {
+      setMessage(`Lỗi: ${err.message}`);
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -144,19 +151,30 @@ export default function AdminPage() {
   }, []);
 
   async function doLogin() {
+    setIsLoading(true);
     try {
       const result = await gql(LOGIN, login);
       setUser(result.adminLogin);
       setMessage(`Đăng nhập ${result.adminLogin.role}`);
     } catch (err) {
-      setMessage(err.message);
+      setMessage(`Lỗi: ${err.message}`);
+    } finally {
+      setIsLoading(false);
     }
   }
 
   async function createRoute() {
-    const { id, ...routeInput } = routeForm;
-    const input = { ...routeInput, distanceKm: Number(routeForm.distanceKm), durationMinutes: Number(routeForm.durationMinutes) };
-    const result = id ? await gql(UPDATE_ROUTE, { id, input }) : await gql(CREATE_ROUTE, { input });
+    if (!routeForm.from || !routeForm.to || !routeForm.pickup || !routeForm.dropoff) {
+      return setMessage("Lỗi: Vui lòng nhập đầy đủ thông tin tuyến.");
+    }
+    if (routeForm.distanceKm <= 0 || routeForm.durationMinutes <= 0) {
+      return setMessage("Lỗi: Khoảng cách và thời gian phải lớn hơn 0.");
+    }
+    setIsLoading(true);
+    try {
+      const { id, ...routeInput } = routeForm;
+      const input = { ...routeInput, distanceKm: Number(routeForm.distanceKm), durationMinutes: Number(routeForm.durationMinutes) };
+      const result = id ? await gql(UPDATE_ROUTE, { id, input }) : await gql(CREATE_ROUTE, { input });
     const route = id ? result.updateRoute : result.createRoute;
     setRouteForm({
       id: "",
@@ -170,16 +188,35 @@ export default function AdminPage() {
     });
     setMessage(`Đã lưu tuyến ${route.from} - ${route.to}`);
     await load();
+    } catch (err) {
+      setMessage(`Lỗi: ${err.message}`);
+      setIsLoading(false);
+    }
   }
 
   async function createTrip() {
-    const { id, ...tripInput } = tripForm;
-    const input = { ...tripInput, price: Number(tripForm.price) };
-    const result = id ? await gql(UPDATE_TRIP, { id, input }) : await gql(CREATE_TRIP, { input });
+    if (!tripForm.routeId || !tripForm.operatorId || !tripForm.vehicleId) {
+      return setMessage("Lỗi: Vui lòng chọn tuyến, nhà xe và xe.");
+    }
+    if (tripForm.price <= 0) {
+      return setMessage("Lỗi: Giá vé phải lớn hơn 0.");
+    }
+    if (!tripForm.departureTime) {
+      return setMessage("Lỗi: Vui lòng nhập thời gian khởi hành.");
+    }
+    setIsLoading(true);
+    try {
+      const { id, ...tripInput } = tripForm;
+      const input = { ...tripInput, price: Number(tripForm.price) };
+      const result = id ? await gql(UPDATE_TRIP, { id, input }) : await gql(CREATE_TRIP, { input });
     const trip = id ? result.updateTrip : result.createTrip;
     setTripForm((current) => ({ ...current, id: "" }));
     setMessage(`Đã lưu chuyến ${trip.id}`);
     await load();
+    } catch (err) {
+      setMessage(`Lỗi: ${err.message}`);
+      setIsLoading(false);
+    }
   }
 
   function editRoute(route) {
@@ -220,14 +257,26 @@ export default function AdminPage() {
   }
 
   async function saveVehicle() {
-    const input = { ...vehicleForm, seatCount: Number(vehicleForm.seatCount) };
-    const result = vehicleForm.id
-      ? await gql(UPDATE_VEHICLE, { id: vehicleForm.id, input })
-      : await gql(CREATE_VEHICLE, { input });
+    if (!vehicleForm.plate || !vehicleForm.type || !vehicleForm.layout) {
+      return setMessage("Lỗi: Vui lòng nhập đầy đủ thông tin xe.");
+    }
+    if (vehicleForm.seatCount <= 0) {
+      return setMessage("Lỗi: Số ghế phải lớn hơn 0.");
+    }
+    setIsLoading(true);
+    try {
+      const input = { ...vehicleForm, seatCount: Number(vehicleForm.seatCount) };
+      const result = vehicleForm.id
+        ? await gql(UPDATE_VEHICLE, { id: vehicleForm.id, input })
+        : await gql(CREATE_VEHICLE, { input });
     const vehicle = vehicleForm.id ? result.updateVehicle : result.createVehicle;
     setMessage(`Đã lưu xe ${vehicle.plate}`);
     setVehicleForm({ id: "", plate: "51B-999.99", type: "Limousine 22 chỗ", seatCount: 22, layout: "premium" });
     await load();
+    } catch (err) {
+      setMessage(`Lỗi: ${err.message}`);
+      setIsLoading(false);
+    }
   }
 
   function editVehicle(vehicle) {
@@ -302,7 +351,8 @@ export default function AdminPage() {
           </section>
         )}
 
-        {message && <div className="empty">{message}</div>}
+        {message && <div className="empty" style={{ color: message.startsWith("Lỗi") ? "var(--danger)" : "var(--success)", borderColor: message.startsWith("Lỗi") ? "var(--danger)" : "var(--success)" }}>{message}</div>}
+        {isLoading && <div style={{ textAlign: "center", padding: "20px", color: "var(--muted)" }}>Đang tải dữ liệu...</div>}
 
         {summary && (
           <section className="metrics">
@@ -344,9 +394,10 @@ export default function AdminPage() {
                   <input className="input" value={routeForm.pickup} onChange={(event) => setRouteForm((current) => ({ ...current, pickup: event.target.value }))} />
                   <input className="input" value={routeForm.dropoff} onChange={(event) => setRouteForm((current) => ({ ...current, dropoff: event.target.value }))} />
                   <textarea className="textarea" value={routeForm.cancellationPolicy} onChange={(event) => setRouteForm((current) => ({ ...current, cancellationPolicy: event.target.value }))} />
-                  <button className="primary-button" onClick={createRoute}>
+                  <button className="primary-button" onClick={createRoute} disabled={isLoading}>
                     <Plus size={18} /> {routeForm.id ? "Cập nhật tuyến" : "Tạo tuyến"}
                   </button>
+                  <div style={{ overflowX: "auto" }}>
                   <table className="table">
                     <thead>
                       <tr><th>Tuyến</th><th>Km</th><th>Thời gian</th><th></th></tr>
@@ -367,6 +418,7 @@ export default function AdminPage() {
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               </div>
 
@@ -392,7 +444,7 @@ export default function AdminPage() {
                   </select>
                   <input className="input" value={tripForm.departureTime} onChange={(event) => setTripForm((current) => ({ ...current, departureTime: event.target.value }))} />
                   <input className="input" type="number" value={tripForm.price} onChange={(event) => setTripForm((current) => ({ ...current, price: event.target.value }))} />
-                  <button className="primary-button" onClick={createTrip}>
+                  <button className="primary-button" onClick={createTrip} disabled={isLoading}>
                     <Save size={18} /> {tripForm.id ? "Cập nhật chuyến" : "Lưu chuyến"}
                   </button>
                 </div>
@@ -411,9 +463,10 @@ export default function AdminPage() {
                     <input className="input" type="number" value={vehicleForm.seatCount} onChange={(event) => setVehicleForm((current) => ({ ...current, seatCount: event.target.value }))} placeholder="Số ghế" />
                     <input className="input" value={vehicleForm.layout} onChange={(event) => setVehicleForm((current) => ({ ...current, layout: event.target.value }))} placeholder="Layout" />
                   </div>
-                  <button className="primary-button" onClick={saveVehicle}>
+                  <button className="primary-button" onClick={saveVehicle} disabled={isLoading}>
                     <BusFront size={18} /> {vehicleForm.id ? "Cập nhật xe" : "Tạo xe"}
                   </button>
+                  <div style={{ overflowX: "auto" }}>
                   <table className="table">
                     <thead>
                       <tr><th>Biển số</th><th>Loại xe</th><th>Ghế</th><th></th></tr>
@@ -434,6 +487,7 @@ export default function AdminPage() {
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               </div>
             </div>
@@ -475,6 +529,7 @@ export default function AdminPage() {
                 <div className="panel-body">
                   {tripBookings.length === 0 && <div className="empty">Chưa tải hoặc chưa có booking.</div>}
                   {tripBookings.length > 0 && (
+                    <div style={{ overflowX: "auto" }}>
                     <table className="table">
                       <thead>
                         <tr><th>Mã</th><th>Email</th><th>Ghế</th><th>Tổng tiền</th><th>Trạng thái</th></tr>
@@ -491,6 +546,7 @@ export default function AdminPage() {
                         ))}
                       </tbody>
                     </table>
+                    </div>
                   )}
                 </div>
               </div>
@@ -500,6 +556,7 @@ export default function AdminPage() {
                   <h2>Top tuyến</h2>
                 </div>
                 <div className="panel-body">
+                  <div style={{ overflowX: "auto" }}>
                   <table className="table">
                     <thead>
                       <tr><th>Tuyến</th><th>Tìm kiếm</th><th>Vé</th></tr>
@@ -510,6 +567,7 @@ export default function AdminPage() {
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               </div>
             </div>
@@ -522,6 +580,7 @@ export default function AdminPage() {
               <h2>Chuyến đang bán</h2>
             </div>
             <div className="panel-body">
+              <div style={{ overflowX: "auto" }}>
               <table className="table">
                 <thead>
                   <tr><th>Tuyến</th><th>Khởi hành</th><th>Nhà xe</th><th>Giá</th><th>Ghế</th><th>Trạng thái</th><th></th></tr>
@@ -548,6 +607,7 @@ export default function AdminPage() {
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
           </section>
         )}

@@ -43,6 +43,9 @@ const config = {
   bookingServiceUrl: process.env.BOOKING_SERVICE_URL || "http://localhost:4020",
   openaiApiKey: process.env.OPENAI_API_KEY || "",
   openaiModel: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+  githubModelsToken: process.env.GITHUB_MODELS_TOKEN || "",
+  githubModelsChatModel: process.env.GITHUB_MODELS_CHAT_MODEL || "openai/gpt-4o-mini",
+  githubModelsEmbeddingModel: process.env.GITHUB_MODELS_EMBEDDING_MODEL || "openai/text-embedding-3-small",
 };
 
 export default config;

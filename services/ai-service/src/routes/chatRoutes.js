@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { healthCheck, chat } from "../controllers/chatController.js";
+import { chat } from "../controllers/chatController.js";
+import { healthCheck } from "../controllers/health.js";
 
 const router = Router();
 
