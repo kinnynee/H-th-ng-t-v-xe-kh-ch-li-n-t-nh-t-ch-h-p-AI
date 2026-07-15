@@ -1,5 +1,36 @@
 import { withTransaction } from "@bus-ai/shared/postgres";
 
+/** Inserts the immutable seat catalog generated for each seeded trip. */
+export async function seedSeatCatalog(pool, trips) {
+  if (!pool) return;
+  await withTransaction(pool, async (db) => {
+    for (const trip of trips) {
+      for (const seat of trip.seats) {
+        await db.query(
+          `INSERT INTO seat_inventory (trip_id, seat_id, label, floor)
+           VALUES ($1, $2, $3, $4) ON CONFLICT (trip_id, seat_id) DO NOTHING`,
+          [trip.id, seat.id, seat.label, seat.floor]
+        );
+      }
+    }
+  });
+}
+
+/** Loads the persisted seat catalog so runtime does not derive it from memory. */
+export async function loadSeatCatalog(pool) {
+  if (!pool) return new Map();
+  const { rows } = await pool.query(
+    "SELECT trip_id, seat_id, label, floor FROM seat_inventory ORDER BY trip_id, floor, seat_id"
+  );
+  const catalog = new Map();
+  for (const row of rows) {
+    const seats = catalog.get(row.trip_id) ?? [];
+    seats.push({ id: row.seat_id, label: row.label, floor: Number(row.floor) });
+    catalog.set(row.trip_id, seats);
+  }
+  return catalog;
+}
+
 export async function loadSeatState(pool) {
   if (!pool) return { booked: new Map(), blocked: new Set() };
   const { rows } = await pool.query("SELECT trip_id, seat_id, state, booking_code, updated_at FROM seat_assignments");

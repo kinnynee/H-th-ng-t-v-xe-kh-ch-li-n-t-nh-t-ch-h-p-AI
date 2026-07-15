@@ -4,18 +4,24 @@ import { connectPostgres } from "@bus-ai/shared/postgres";
 import { publishRabbit, seatChangedRoutingKey } from "@bus-ai/shared/broker";
 import { bindGrpcServer, createServiceGrpcServer, loadGrpcProto } from "@bus-ai/shared/grpc";
 import { createSeatInventory } from "./core.js";
-import { loadSeatState, saveSeatState } from "./repository.js";
+import { loadSeatCatalog, loadSeatState, saveSeatState } from "./repository.js";
 import { createSeatGrpcController } from "./controllers/seat-grpc-controller.js";
 import { createHealthCheck } from "./health.js";
+import { assertAuthConfiguration } from "@bus-ai/shared/auth";
 
 const proto = loadGrpcProto("seat_inventory.proto").bus.seat.v1;
+assertAuthConfiguration();
 
 const redis = await connectRedis(process.env.REDIS_URL, "seat-service");
 const database = await connectPostgres(process.env.DATABASE_URL, "seat-service");
-const initialState = await loadSeatState(database);
+const [initialState, seatCatalog] = await Promise.all([
+  loadSeatState(database),
+  loadSeatCatalog(database)
+]);
 const inventory = createSeatInventory({
   cache: createCacheAdapter(redis),
   trips: buildTrips(),
+  seatCatalog,
   initialState,
   persistState: (state) => saveSeatState(database, state),
   onSeatChanged: ({ tripId, seats, message }) => publishRabbit(
@@ -29,6 +35,7 @@ const server = createServiceGrpcServer({
   serviceName: "seat-service",
   health: createHealthCheck({ database, redis, inventory })
 });
+// Booking service sends a short-lived SERVICE token with every state-changing call.
 server.addService(proto.SeatInventoryService.service, createSeatGrpcController(inventory));
 
 const bindAddress = process.env.SEAT_GRPC_BIND || "0.0.0.0:50051";

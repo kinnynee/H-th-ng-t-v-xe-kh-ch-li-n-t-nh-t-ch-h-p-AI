@@ -1,8 +1,9 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { withTransaction } from "./postgres.js";
 
-/** Executes each numbered SQL migration once and records it in schema_migrations. */
+/** Executes each numbered JavaScript migration once and records it in schema_migrations. */
 export async function runMigrations(pool, directory, label) {
   if (!pool) throw new Error(`${label}: DATABASE_URL is required to run migrations.`);
   await pool.query(`
@@ -13,15 +14,23 @@ export async function runMigrations(pool, directory, label) {
   `);
 
   const files = (await fs.readdir(directory))
-    .filter((file) => /^\d+.*\.sql$/i.test(file))
+    .filter((file) => /^\d+.*\.js$/i.test(file))
     .sort((left, right) => left.localeCompare(right));
 
   for (const name of files) {
-    const applied = await pool.query("SELECT 1 FROM schema_migrations WHERE name = $1", [name]);
+    // Existing databases may have been initialized by the former .sql migrations.
+    const legacyName = name.replace(/\.js$/i, ".sql");
+    const applied = await pool.query(
+      "SELECT 1 FROM schema_migrations WHERE name = ANY($1::text[])",
+      [[name, legacyName]]
+    );
     if (applied.rowCount) continue;
-    const sql = await fs.readFile(path.join(directory, name), "utf8");
+    const migration = await import(pathToFileURL(path.join(directory, name)).href);
+    if (typeof migration.up !== "function") {
+      throw new Error(`${label}: migration ${name} must export an async up(db) function.`);
+    }
     await withTransaction(pool, async (db) => {
-      await db.query(sql);
+      await migration.up(db);
       await db.query("INSERT INTO schema_migrations (name) VALUES ($1)", [name]);
     });
     console.log(`[${label}] applied migration ${name}`);
