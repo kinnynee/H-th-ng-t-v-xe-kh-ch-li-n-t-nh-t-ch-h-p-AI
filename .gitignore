@@ -9,3 +9,9 @@ tmp/
 data/generated-tickets/
 data/email-log.jsonl
 *.log
+
+# Retired assignment documentation; do not re-add these files.
+/README.md
+/README_Trung_Kien.md
+/README_Viet_Khai.md
+/README_Xuan_Hung.md
