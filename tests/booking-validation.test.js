@@ -19,8 +19,13 @@ test("accepts a complete booking request", () => {
   assert.equal(validateBookingInput(validBooking), null);
 });
 
-test("rejects incomplete passenger details and duplicate seats", () => {
-  assert.match(validateBookingInput({ ...validBooking, passengers: [{ ...validBooking.passengers[0], documentId: "" }] }), /document ID/);
+test("accepts an empty document ID because it is optional", () => {
+  assert.equal(validateBookingInput({ ...validBooking, passengers: [{ ...validBooking.passengers[0], documentId: "" }] }), null);
+});
+
+test("rejects invalid provided document IDs, incomplete passenger details, and duplicate seats", () => {
+  assert.match(validateBookingInput({ ...validBooking, passengers: [{ ...validBooking.passengers[0], documentId: "ABC" }] }), /document ID/);
+  assert.match(validateBookingInput({ ...validBooking, passengers: [{ ...validBooking.passengers[0], fullName: "" }] }), /full name/);
   assert.match(validateBookingInput({
     ...validBooking,
     passengers: [validBooking.passengers[0], { ...validBooking.passengers[0] }]
