@@ -12,7 +12,22 @@ export async function gql(query, variables = {}) {
     body: JSON.stringify({ query, variables }),
     cache: "no-store"
   });
-  const payload = await response.json();
+  const rawPayload = await response.text();
+  let payload;
+  try {
+    payload = JSON.parse(rawPayload);
+  } catch {
+    throw new Error(
+      `GraphQL gateway không trả về JSON (HTTP ${response.status}). Kiểm tra endpoint ${getGraphQLEndpoint()}.`
+    );
+  }
+  if (!response.ok) {
+    throw new Error(
+      payload.errors?.map((error) => error.message).join("\n") ||
+      payload.error ||
+      `GraphQL request failed (HTTP ${response.status}).`
+    );
+  }
   if (payload.errors?.length) {
     throw new Error(payload.errors.map((error) => error.message).join("\n"));
   }
