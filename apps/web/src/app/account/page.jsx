@@ -8,16 +8,16 @@ import { gql, money, shortDateTime } from "../../lib/graphql";
 const LOGIN = `
 mutation Login($email: String!, $password: String!) {
   login(email: $email, password: $password) {
-    id email role name
-    savedPassengers { id fullName phone email documentId }
+    accessToken
+    user { id email role name savedPassengers { id fullName phone email documentId } }
   }
 }`;
 
 const REGISTER = `
 mutation Register($input: RegisterCustomerInput!) {
   registerCustomer(input: $input) {
-    id email role name
-    savedPassengers { id fullName phone email documentId }
+    accessToken
+    user { id email role name savedPassengers { id fullName phone email documentId } }
   }
 }`;
 
@@ -46,8 +46,8 @@ mutation DeletePassenger($userId: ID!, $passengerId: ID!) {
 }`;
 
 const CANCEL = `
-mutation Cancel($code: ID!, $email: String!) {
-  cancelBooking(code: $code, email: $email) { code status }
+mutation Cancel($code: ID!) {
+  cancelBooking(code: $code) { code status }
 }`;
 
 export default function AccountPage() {
@@ -77,7 +77,7 @@ export default function AccountPage() {
 
   useEffect(() => {
     const raw = localStorage.getItem("busUser");
-    if (!raw) return;
+    if (!raw || !localStorage.getItem("busAccessToken")) return;
     const stored = JSON.parse(raw);
     setUser(stored);
     loadAccount(stored).catch((error) => setMessage(error.message));
@@ -89,12 +89,14 @@ export default function AccountPage() {
       const data = mode === "login"
         ? await gql(LOGIN, { email: credentials.email, password: credentials.password })
         : await gql(REGISTER, { input: credentials });
-      const nextUser = mode === "login" ? data.login : data.registerCustomer;
+      const auth = mode === "login" ? data.login : data.registerCustomer;
+      const nextUser = auth.user;
       if (nextUser.role !== "CUSTOMER") {
         setMessage("Trang này dành cho tài khoản CUSTOMER.");
         return;
       }
       localStorage.setItem("busUser", JSON.stringify(nextUser));
+      localStorage.setItem("busAccessToken", auth.accessToken);
       setUser(nextUser);
       setPassenger((current) => ({ ...current, email: nextUser.email }));
       await loadAccount(nextUser);
@@ -106,6 +108,7 @@ export default function AccountPage() {
 
   function logout() {
     localStorage.removeItem("busUser");
+    localStorage.removeItem("busAccessToken");
     setUser(null);
     setBookings([]);
     setPassengers([]);
@@ -130,7 +133,7 @@ export default function AccountPage() {
   async function cancelBooking(booking) {
     setMessage("");
     try {
-      await gql(CANCEL, { code: booking.code, email: booking.customerEmail });
+      await gql(CANCEL, { code: booking.code });
       await loadAccount();
       setMessage(`Đã hủy booking ${booking.code}.`);
     } catch (error) {

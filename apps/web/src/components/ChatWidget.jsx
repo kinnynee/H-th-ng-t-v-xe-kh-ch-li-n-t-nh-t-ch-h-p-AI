@@ -5,22 +5,22 @@ import { Bot, Send, X } from "lucide-react";
 import { gql } from "../lib/graphql";
 
 const ASK = `
-mutation Ask($message: String!, $bookingCode: String, $email: String) {
-  askAssistant(message: $message, bookingCode: $bookingCode, email: $email) {
+mutation Ask($message: String!, $bookingCode: String) {
+  askAssistant(message: $message, bookingCode: $bookingCode) {
     answer
     sources
     toolCalls
   }
 }`;
 
-export default function ChatWidget({ bookingCode = "", email = "" }) {
+export default function ChatWidget({ bookingCode = "" }) {
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState([
     {
       role: "bot",
-      text: "Mình có thể tìm chuyến, trả lời chính sách hủy vé và tra cứu booking bằng mã kèm email."
+      text: "Mình có thể tìm chuyến, trả lời chính sách hủy vé và tra cứu booking mà bạn đang được cấp quyền truy cập."
     }
   ]);
 
@@ -31,7 +31,7 @@ export default function ChatWidget({ bookingCode = "", email = "" }) {
     setLog((items) => [...items, { role: "user", text }]);
     setBusy(true);
     try {
-      const data = await gql(ASK, { message: text, bookingCode, email });
+      const data = await gql(ASK, { message: text, bookingCode }, { bookingCode });
       const suffix = data.askAssistant.sources.length ? `\nNguồn: ${data.askAssistant.sources.join(", ")}` : "";
       setLog((items) => [...items, { role: "bot", text: `${data.askAssistant.answer}${suffix}` }]);
     } catch (error) {

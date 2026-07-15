@@ -1,15 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import { CheckCircle2, Search, Ticket, XCircle } from "lucide-react";
 import ChatWidget from "../../../components/ChatWidget";
 import SiteChrome from "../../../components/SiteChrome";
-import { gql, money, shortDateTime } from "../../../lib/graphql";
+import { gql, money, openBookingTicket, shortDateTime, storeBookingAccessToken } from "../../../lib/graphql";
 
 const BOOKING = `
-query Booking($code: ID!, $email: String) {
-  booking(code: $code, email: $email) {
+query Booking($code: ID!) {
+  booking(code: $code) {
     code status routeName departureTime pickup dropoff vehiclePlate customerEmail totalAmount ticketHtmlUrl ticketPdfUrl
     seatIds
     passengers { seatId fullName phone email documentId }
@@ -18,25 +18,24 @@ query Booking($code: ID!, $email: String) {
 }`;
 
 const CANCEL = `
-mutation Cancel($code: ID!, $email: String!) {
-  cancelBooking(code: $code, email: $email) {
+mutation Cancel($code: ID!) {
+  cancelBooking(code: $code) {
     code status
   }
 }`;
 
 export default function BookingPage() {
   const params = useParams();
-  const searchParams = useSearchParams();
   const code = params.code;
   const [lookupCode, setLookupCode] = useState(code === "demo" ? "" : code);
-  const [email, setEmail] = useState(searchParams.get("email") ?? "");
+  const [accessReady, setAccessReady] = useState(false);
   const [booking, setBooking] = useState(null);
   const [error, setError] = useState("");
 
   async function lookup() {
     setError("");
     try {
-      const data = await gql(BOOKING, { code: lookupCode, email });
+      const data = await gql(BOOKING, { code: lookupCode }, { bookingCode: lookupCode });
       setBooking(data.booking);
     } catch (err) {
       setError(err.message);
@@ -47,7 +46,7 @@ export default function BookingPage() {
   async function cancel() {
     setError("");
     try {
-      await gql(CANCEL, { code: booking.code, email });
+      await gql(CANCEL, { code: booking.code }, { bookingCode: booking.code });
       await lookup();
     } catch (err) {
       setError(err.message);
@@ -55,8 +54,26 @@ export default function BookingPage() {
   }
 
   useEffect(() => {
-    if (lookupCode && email) lookup();
-  }, [lookupCode, email]);
+    const token = new URLSearchParams(window.location.hash.slice(1)).get("access");
+    if (token && code !== "demo") {
+      storeBookingAccessToken(code, token);
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+    setAccessReady(true);
+  }, [code]);
+
+  useEffect(() => {
+    if (lookupCode && accessReady) lookup();
+  }, [lookupCode, accessReady]);
+
+  async function openTicket(url) {
+    setError("");
+    try {
+      await openBookingTicket(url, booking.code);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
 
   return (
     <SiteChrome>
@@ -64,7 +81,7 @@ export default function BookingPage() {
         <aside className="panel">
           <div className="panel-header">
             <h1>Tra cứu vé</h1>
-            <p>Cần mã booking và email nhận vé.</p>
+            <p>Đăng nhập hoặc mở liên kết truy cập an toàn được cấp khi tạo booking.</p>
           </div>
           <div className="panel-body form-grid">
             <label className="field">
@@ -76,10 +93,6 @@ export default function BookingPage() {
                 onChange={(event) => setLookupCode(event.target.value)}
                 placeholder="BK260617ABCD"
               />
-            </label>
-            <label className="field">
-              <span>Email</span>
-              <input className="input" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="guest@example.com" />
             </label>
             <button className="primary-button" onClick={lookup}>
               <Search size={18} /> Tra cứu
@@ -131,8 +144,8 @@ export default function BookingPage() {
                 )}
                 {booking.tickets.length > 0 && (
                   <div className="two-cols">
-                    <a className="ghost-button" href={booking.ticketHtmlUrl} target="_blank" rel="noreferrer">Mở vé HTML</a>
-                    <a className="ghost-button" href={booking.ticketPdfUrl} target="_blank" rel="noreferrer">Mở vé PDF</a>
+                    <button className="ghost-button" onClick={() => openTicket(booking.ticketHtmlUrl)}>Mở vé HTML</button>
+                    <button className="ghost-button" onClick={() => openTicket(booking.ticketPdfUrl)}>Mở vé PDF</button>
                   </div>
                 )}
               </div>
@@ -140,7 +153,7 @@ export default function BookingPage() {
           )}
         </section>
       </main>
-      <ChatWidget bookingCode={booking?.code ?? ""} email={email} />
+      <ChatWidget bookingCode={booking?.code ?? ""} />
     </SiteChrome>
   );
 }

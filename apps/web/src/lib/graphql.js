@@ -5,10 +5,37 @@ export function getGraphQLEndpoint() {
   return process.env.NEXT_PUBLIC_GRAPHQL_URL || "http://localhost:4000/graphql";
 }
 
-export async function gql(query, variables = {}) {
+function guestAccessStorageKey(code) {
+  return `busBookingAccess:${code}`;
+}
+
+export function storeBookingAccessToken(code, token) {
+  if (typeof window !== "undefined" && code && token) {
+    sessionStorage.setItem(guestAccessStorageKey(code), token);
+  }
+}
+
+export function getBookingAccessToken(code) {
+  if (typeof window === "undefined" || !code) return "";
+  return sessionStorage.getItem(guestAccessStorageKey(code)) ?? "";
+}
+
+function requestAuthHeaders(bookingCode = "") {
+  const accessToken = typeof window === "undefined" ? "" : localStorage.getItem("busAccessToken") ?? "";
+  const bookingAccessToken = getBookingAccessToken(bookingCode);
+  return {
+    ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
+    ...(bookingAccessToken ? { "x-booking-access-token": bookingAccessToken } : {})
+  };
+}
+
+export async function gql(query, variables = {}, { bookingCode = "" } = {}) {
   const response = await fetch(getGraphQLEndpoint(), {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...requestAuthHeaders(bookingCode)
+    },
     body: JSON.stringify({ query, variables }),
     cache: "no-store"
   });
@@ -22,16 +49,24 @@ export async function gql(query, variables = {}) {
     );
   }
   if (!response.ok) {
-    throw new Error(
-      payload.errors?.map((error) => error.message).join("\n") ||
-      payload.error ||
-      `GraphQL request failed (HTTP ${response.status}).`
-    );
+    throw new Error(payload.errors?.map((error) => error.message).join("\n") || payload.error || `GraphQL request failed (HTTP ${response.status}).`);
   }
   if (payload.errors?.length) {
     throw new Error(payload.errors.map((error) => error.message).join("\n"));
   }
   return payload.data;
+}
+
+/** Opens a ticket only after the browser sends the account JWT or guest capability in a header. */
+export async function openBookingTicket(url, bookingCode) {
+  const response = await fetch(url, { headers: requestAuthHeaders(bookingCode), cache: "no-store" });
+  if (!response.ok) {
+    const message = await response.text().catch(() => "");
+    throw new Error(message || "Không thể mở vé.");
+  }
+  const objectUrl = URL.createObjectURL(await response.blob());
+  window.open(objectUrl, "_blank", "noopener,noreferrer");
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
 }
 
 /**

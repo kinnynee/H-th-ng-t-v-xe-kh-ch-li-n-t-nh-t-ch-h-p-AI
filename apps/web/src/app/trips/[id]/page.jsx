@@ -7,7 +7,7 @@ import { Armchair, CalendarDays, CheckCircle2, CreditCard, MapPin, RefreshCw, Ti
 import ChatWidget from "../../../components/ChatWidget";
 import SeatMap from "../../../components/SeatMap";
 import SiteChrome from "../../../components/SiteChrome";
-import { gql, money, shortDateTime, subscribeToSeatChanges } from "../../../lib/graphql";
+import { gql, money, openBookingTicket, shortDateTime, storeBookingAccessToken, subscribeToSeatChanges } from "../../../lib/graphql";
 
 const TRIP = `
 query Trip($id: ID!) {
@@ -28,7 +28,7 @@ mutation Hold($tripId: ID!, $seatIds: [String!]!, $customerEmail: String, $ttlSe
 const CREATE = `
 mutation CreateBooking($input: CreateBookingInput!) {
   createBooking(input: $input) {
-    code status totalAmount customerEmail
+    code status totalAmount customerEmail guestAccessToken
   }
 }`;
 
@@ -46,6 +46,24 @@ query SavedPassengers($userId: ID!) {
     id fullName phone email documentId
   }
 }`;
+
+function formatHoldTime(seconds) {
+  const safeSeconds = Math.max(0, Number(seconds) || 0);
+  return `${String(Math.floor(safeSeconds / 60)).padStart(2, "0")}:${String(safeSeconds % 60).padStart(2, "0")}`;
+}
+
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value ?? "").trim());
+}
+
+function isValidPhone(value) {
+  return /^(?:\+?84|0)\d{9,10}$/.test(String(value ?? "").replace(/[.\s-]/g, ""));
+}
+
+function isValidDocumentId(value) {
+  const documentId = String(value ?? "").trim();
+  return !documentId || /^[A-Za-z0-9-]{6,20}$/.test(documentId);
+}
 
 export default function TripDetail() {
   const params = useParams();
@@ -126,7 +144,7 @@ export default function TripDetail() {
       setError("Vui lòng chọn ít nhất một ghế trước khi giữ chỗ.");
       return;
     }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customer.email) || !/^(?:\+?84|0)\d{9,10}$/.test(customer.phone.replace(/[.\s-]/g, ""))) {
+    if (!isValidEmail(customer.email) || !isValidPhone(customer.phone)) {
       setError("Vui lòng nhập email và số điện thoại nhận vé hợp lệ.");
       return;
     }
@@ -162,17 +180,34 @@ export default function TripDetail() {
   }
 
   async function createBooking() {
-    if (!hold?.ok || !hold.holdToken || holdRemaining <= 0 || selected.length === 0) {
-      setError("Phiên giữ ghế không còn hợp lệ. Vui lòng chọn và giữ ghế lại.");
+    if (!hold?.ok || !hold.holdToken || holdRemaining <= 0) {
+      setError("Phiên giữ ghế đã hết hạn. Vui lòng chọn và giữ ghế lại.");
+      return;
+    }
+    if (selected.length === 0) {
+      setError("Không thể tạo booking khi chưa chọn ghế.");
+      return;
+    }
+    if (!isValidEmail(customer.email) || !isValidPhone(customer.phone)) {
+      setError("Vui lòng nhập email và số điện thoại nhận vé hợp lệ.");
       return;
     }
     for (const seatId of selected) {
       const passenger = passengers[seatId] ?? {};
-      const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(passenger.email ?? "").trim());
-      const validPhone = /^(?:\+?84|0)\d{9,10}$/.test(String(passenger.phone ?? "").replace(/[.\s-]/g, ""));
-      const validDocument = /^[A-Za-z0-9-]{6,20}$/.test(String(passenger.documentId ?? "").trim());
-      if (String(passenger.fullName ?? "").trim().length < 2 || !validEmail || !validPhone || !validDocument) {
-        setError("Mỗi hành khách cần có họ tên, email, số điện thoại và giấy tờ hợp lệ.");
+      if (String(passenger.fullName ?? "").trim().length < 2) {
+        setError(`Vui lòng nhập họ tên hợp lệ cho ghế ${seatId}.`);
+        return;
+      }
+      if (!isValidEmail(passenger.email)) {
+        setError(`Vui lòng nhập email hợp lệ cho hành khách ghế ${seatId}.`);
+        return;
+      }
+      if (!isValidPhone(passenger.phone)) {
+        setError(`Vui lòng nhập số điện thoại hợp lệ cho hành khách ghế ${seatId}.`);
+        return;
+      }
+      if (!isValidDocumentId(passenger.documentId)) {
+        setError(`Giấy tờ của hành khách ghế ${seatId} không hợp lệ.`);
         return;
       }
     }
@@ -189,6 +224,7 @@ export default function TripDetail() {
           userId: checkoutMode === "registered" ? user?.id : undefined
         }
       });
+      storeBookingAccessToken(data.createBooking.code, data.createBooking.guestAccessToken);
       setBooking(data.createBooking);
     } catch (err) {
       setError(err.message);
@@ -205,8 +241,9 @@ export default function TripDetail() {
     setBusy(true);
     setError("");
     try {
-      const data = await gql(PAY, { code: booking.code, success });
-      setBooking(data.payBooking);
+      const data = await gql(PAY, { code: booking.code, success }, { bookingCode: booking.code });
+      setBooking((current) => ({ ...data.payBooking, guestAccessToken: current?.guestAccessToken }));
+      setHold(null);
       await load();
     } catch (err) {
       setError(err.message);
@@ -237,6 +274,20 @@ export default function TripDetail() {
       }
     }));
     setCustomer((current) => ({ ...current, email: saved.email, phone: saved.phone }));
+  }
+
+  function bookingLink() {
+    const base = `/booking/${booking.code}`;
+    return booking.guestAccessToken ? `${base}#access=${encodeURIComponent(booking.guestAccessToken)}` : base;
+  }
+
+  async function openTicket(url) {
+    setError("");
+    try {
+      await openBookingTicket(url, booking.code);
+    } catch (err) {
+      setError(err.message);
+    }
   }
 
   if (!trip) {
@@ -288,7 +339,7 @@ export default function TripDetail() {
               <div className="panel-header">
                 <h2>Thông tin hành khách</h2>
                 <p>
-                  <Timer size={14} /> Ghế đang giữ trong {holdRemaining} giây.
+                  <Timer size={14} /> Ghế đang giữ trong {formatHoldTime(holdRemaining)}.
                 </p>
               </div>
               <div className="panel-body passenger-list">
@@ -309,26 +360,26 @@ export default function TripDetail() {
                     <div className="two-cols" style={{ marginTop: 12 }}>
                       <label className="field">
                         <span>Họ tên</span>
-                        <input className="input" value={passengers[seatId]?.fullName ?? ""} onChange={(event) => updatePassenger(seatId, "fullName", event.target.value)} />
+                        <input className="input" value={passengers[seatId]?.fullName ?? ""} onChange={(event) => updatePassenger(seatId, "fullName", event.target.value)} minLength={2} required />
                       </label>
                       <label className="field">
                         <span>Số điện thoại</span>
-                        <input className="input" value={passengers[seatId]?.phone ?? ""} onChange={(event) => updatePassenger(seatId, "phone", event.target.value)} />
+                        <input className="input" type="tel" inputMode="tel" value={passengers[seatId]?.phone ?? ""} onChange={(event) => updatePassenger(seatId, "phone", event.target.value)} required />
                       </label>
                     </div>
                     <div className="two-cols" style={{ marginTop: 12 }}>
                       <label className="field">
                         <span>Email</span>
-                        <input className="input" value={passengers[seatId]?.email ?? ""} onChange={(event) => updatePassenger(seatId, "email", event.target.value)} />
+                        <input className="input" type="email" value={passengers[seatId]?.email ?? ""} onChange={(event) => updatePassenger(seatId, "email", event.target.value)} required />
                       </label>
                       <label className="field">
                         <span>Giấy tờ</span>
-                        <input className="input" value={passengers[seatId]?.documentId ?? ""} onChange={(event) => updatePassenger(seatId, "documentId", event.target.value)} />
+                        <input className="input" value={passengers[seatId]?.documentId ?? ""} onChange={(event) => updatePassenger(seatId, "documentId", event.target.value)} placeholder="Tùy chọn" />
                       </label>
                     </div>
                   </div>
                 ))}
-                <button className="primary-button" onClick={createBooking} disabled={busy}>
+                <button className="primary-button" onClick={createBooking} disabled={busy || holdRemaining <= 0}>
                   <Ticket size={18} /> Tạo booking
                 </button>
               </div>
@@ -361,7 +412,10 @@ export default function TripDetail() {
             )}
             {checkoutMode === "registered" && user && (
               <span className="badge status-good">
-                <UserCheck size={14} /> Booking sẽ lưu vào lịch sử tài khoản
+                <UserCheck size={14} />
+                {booking
+                  ? `Booking ${booking.code} đã được lưu vào lịch sử tài khoản.`
+                  : "Booking sẽ được lưu sau khi chọn ghế, giữ ghế và bấm Tạo booking."}
               </span>
             )}
             <div className="ticket-card">
@@ -412,15 +466,15 @@ export default function TripDetail() {
                         <p className="muted">QR: {ticket.qrPayload}</p>
                       </div>
                     ))}
-                    <Link className="primary-button" href={`/booking/${booking.code}?email=${encodeURIComponent(booking.customerEmail)}`}>
+                    <Link className="primary-button" href={bookingLink()}>
                       Xem vé
                     </Link>
-                    <a className="ghost-button" href={booking.ticketHtmlUrl} target="_blank" rel="noreferrer">
+                    <button className="ghost-button" onClick={() => openTicket(booking.ticketHtmlUrl)}>
                       Vé HTML
-                    </a>
-                    <a className="ghost-button" href={booking.ticketPdfUrl} target="_blank" rel="noreferrer">
+                    </button>
+                    <button className="ghost-button" onClick={() => openTicket(booking.ticketPdfUrl)}>
                       Vé PDF
-                    </a>
+                    </button>
                   </>
                 )}
               </div>
