@@ -47,8 +47,8 @@ npm run dev
 
 Các cổng mặc định:
 
-- Web: http://localhost:3000
-- GraphQL: http://localhost:4000/graphql
+- Web: http://localhost:3001
+- GraphQL: http://localhost:4001/graphql
 - Trip service: http://localhost:4010
 - Booking service: http://localhost:4020
 - Analytics worker HTTP: http://localhost:4050
@@ -66,8 +66,8 @@ npm run docker:up
 Sau đó mở:
 
 - App qua Nginx: http://localhost
-- Web trực tiếp: http://localhost:3000
-- GraphQL Gateway: http://localhost:4000/graphql
+- Web trực tiếp: http://localhost:3001
+- GraphQL Gateway: http://localhost:4001/graphql
 - RabbitMQ management: http://localhost:15672, user/pass `guest/guest`
 
 Các lệnh Docker tiện dùng:
