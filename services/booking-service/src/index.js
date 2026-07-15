@@ -7,7 +7,9 @@ import protoLoader from "@grpc/proto-loader";
 import { publishKafka, publishRabbit } from "@bus-ai/shared/broker";
 import { connectPostgres } from "@bus-ai/shared/postgres";
 import { bindGrpcServer, createServiceGrpcServer } from "@bus-ai/shared/grpc";
+import { assertAuthConfiguration, authenticate, authorize, hashPassword, isPasswordHash, issueAccessToken, verifyPassword } from "@bus-ai/shared/auth";
 import { demoUsers } from "./demo-users.js";
+import { createGuestAccessToken, hashGuestAccessToken, verifiesGuestAccessToken } from "./guest-access.js";
 import { validateBookingInput } from "./validation.js";
 import {
   loadBookingRepository,
@@ -35,9 +37,10 @@ const seatClient = new proto.SeatInventoryService(
 const app = express();
 app.use(cors());
 app.use(express.json());
+assertAuthConfiguration();
 
 let bookings = new Map();
-let users = new Map(demoUsers.map((user) => [user.id, structuredClone(user)]));
+let users = new Map((process.env.NODE_ENV === "production" ? [] : demoUsers).map((user) => [user.id, structuredClone(user)]));
 const database = await connectPostgres(process.env.DATABASE_URL, "booking-service");
 if (database) {
   const stored = await loadBookingRepository(database);
@@ -49,7 +52,9 @@ const publicBookingUrl = process.env.PUBLIC_BOOKING_URL || "http://localhost:402
 
 function grpcCall(method, payload) {
   return new Promise((resolve, reject) => {
-    seatClient[method](payload, (error, response) => {
+    const metadata = new grpc.Metadata();
+    metadata.set("authorization", `Bearer ${issueAccessToken({ id: "booking-service", role: "SERVICE" })}`);
+    seatClient[method](payload, metadata, (error, response) => {
       if (error) reject(error);
       else resolve(response);
     });
@@ -73,14 +78,19 @@ function ticketCode(booking, seatId) {
 }
 
 function publicBooking(booking) {
-  return booking
-    ? {
-        ...booking,
-        ticketHtmlUrl: `${publicBookingUrl}/tickets/${booking.code}.html`,
-        ticketPdfUrl: `${publicBookingUrl}/tickets/${booking.code}.pdf`,
-        passengers: booking.passengers.map((item) => ({ ...item }))
-      }
-    : null;
+  if (!booking) return null;
+  const {
+    holdToken: _holdToken,
+    guestAccessTokenHash: _guestAccessTokenHash,
+    _expiryTimerScheduled: _expiryTimerScheduled,
+    ...safeBooking
+  } = booking;
+  return {
+    ...safeBooking,
+    ticketHtmlUrl: `${publicBookingUrl}/tickets/${booking.code}.html`,
+    ticketPdfUrl: `${publicBookingUrl}/tickets/${booking.code}.pdf`,
+    passengers: booking.passengers.map((item) => ({ ...item }))
+  };
 }
 
 function ticketHtml(booking) {
@@ -175,6 +185,44 @@ function findUserByEmail(email) {
   return [...users.values()].find((user) => user.email.toLowerCase() === String(email ?? "").toLowerCase());
 }
 
+function requestUser(req) {
+  try {
+    return authenticate(req.headers);
+  } catch {
+    return null;
+  }
+}
+
+function requireRoles(...roles) {
+  return (req, res, next) => {
+    try {
+      req.user = authorize(authenticate(req.headers), roles);
+      next();
+    } catch (error) {
+      res.status(error.status ?? 401).json({ error: error.message });
+    }
+  };
+}
+
+function requireCurrentUser(req, res, next) {
+  try {
+    const user = authenticate(req.headers);
+    if (user.id !== req.params.id && user.role !== "ADMIN") {
+      return res.status(403).json({ error: "You do not have permission for this user." });
+    }
+    req.user = user;
+    next();
+  } catch (error) {
+    res.status(error.status ?? 401).json({ error: error.message });
+  }
+}
+
+function canAccessBooking(req, booking) {
+  const user = requestUser(req);
+  if (user && (["ADMIN", "STAFF"].includes(user.role) || (booking.userId && booking.userId === user.id))) return true;
+  return verifiesGuestAccessToken(req.get("x-booking-access-token"), booking.guestAccessTokenHash);
+}
+
 function rememberPassengers(userId, passengers) {
   const user = users.get(userId);
   if (!user) return;
@@ -238,12 +286,14 @@ app.get("/health", async (_req, res) => {
 app.get("/tickets/:code.html", (req, res) => {
   const booking = bookings.get(req.params.code);
   if (!booking) return res.status(404).send("Booking not found");
+  if (!canAccessBooking(req, booking)) return res.status(403).send("Ticket access is denied");
   res.type("html").send(ticketHtml(booking));
 });
 
 app.get("/tickets/:code.pdf", (req, res) => {
   const booking = bookings.get(req.params.code);
   if (!booking) return res.status(404).send("Booking not found");
+  if (!canAccessBooking(req, booking)) return res.status(403).send("Ticket access is denied");
   res.setHeader("content-type", "application/pdf");
   res.setHeader("content-disposition", `inline; filename="${booking.code}.pdf"`);
   res.send(Buffer.from(simpleTicketPdf(booking), "utf8"));
@@ -275,12 +325,17 @@ app.post("/holds", async (req, res) => {
 
 app.post("/bookings", async (req, res) => {
   try {
+    const user = requestUser(req);
+    if (req.body.userId && (!user || user.id !== req.body.userId)) {
+      return res.status(403).json({ error: "A booking can only be created for the authenticated user." });
+    }
     const passengers = req.body.passengers ?? [];
     const validationError = validateBookingInput({ ...req.body, passengers });
     if (validationError) return res.status(400).json({ error: validationError });
     const trip = await getTrip(req.body.tripId);
     const seatIds = passengers.map((passenger) => String(passenger.seatId).trim().toUpperCase());
     const code = bookingCode();
+    const guestAccessToken = createGuestAccessToken();
     const booking = {
       code,
       tripId: trip.id,
@@ -290,9 +345,10 @@ app.post("/bookings", async (req, res) => {
       dropoff: trip.dropoff,
       vehiclePlate: trip.vehiclePlate,
       holdToken: req.body.holdToken,
+      guestAccessTokenHash: hashGuestAccessToken(guestAccessToken),
       customerEmail: req.body.customerEmail,
       customerPhone: req.body.customerPhone,
-      userId: req.body.userId ?? "",
+      userId: user?.role === "CUSTOMER" ? user.id : "",
       seatIds,
       passengers,
       totalAmount: trip.price * seatIds.length,
@@ -309,13 +365,15 @@ app.post("/bookings", async (req, res) => {
     await saveBooking(database, booking);
     schedulePendingExpiry(booking);
     await publishKafka("booking-events", "BookingCreated", publicBooking(booking));
-    res.status(201).json({ booking: publicBooking(booking) });
+    // The raw capability is returned only in this checkout response. It is
+    // never persisted or included in events, logs, or subsequent lookups.
+    res.status(201).json({ booking: { ...publicBooking(booking), guestAccessToken } });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
 });
 
-app.get("/bookings", (req, res) => {
+app.get("/bookings", requireRoles("ADMIN", "STAFF"), (req, res) => {
   const items = [...bookings.values()].filter((booking) => {
     if (req.query.tripId && booking.tripId !== req.query.tripId) return false;
     if (req.query.email && booking.customerEmail !== req.query.email) return false;
@@ -328,15 +386,14 @@ app.get("/bookings", (req, res) => {
 app.get("/bookings/:code", (req, res) => {
   const booking = bookings.get(req.params.code);
   if (!booking) return res.status(404).json({ error: "Booking not found" });
-  if (req.query.email && booking.customerEmail !== req.query.email) {
-    return res.status(403).json({ error: "Email does not match this booking" });
-  }
+  if (!canAccessBooking(req, booking)) return res.status(403).json({ error: "Booking access is denied" });
   res.json({ booking: publicBooking(booking) });
 });
 
 app.post("/bookings/:code/pay", async (req, res) => {
   const booking = bookings.get(req.params.code);
   if (!booking) return res.status(404).json({ error: "Booking not found" });
+  if (!canAccessBooking(req, booking)) return res.status(403).json({ error: "Booking access is denied" });
   if (booking.status !== "PENDING_PAYMENT") return res.status(409).json({ error: `Booking is ${booking.status}` });
 
   if (!req.body.success) {
@@ -382,7 +439,7 @@ app.post("/bookings/:code/pay", async (req, res) => {
 app.post("/bookings/:code/cancel", async (req, res) => {
   const booking = bookings.get(req.params.code);
   if (!booking) return res.status(404).json({ error: "Booking not found" });
-  if (req.body.email && req.body.email !== booking.customerEmail) return res.status(403).json({ error: "Email does not match this booking" });
+  if (!canAccessBooking(req, booking)) return res.status(403).json({ error: "Booking access is denied" });
   if (["CHECKED_IN", "COMPLETED", "CANCELLED", "EXPIRED", "PAYMENT_FAILED"].includes(booking.status)) {
     return res.status(409).json({ error: `Cannot cancel booking in ${booking.status}` });
   }
@@ -402,7 +459,7 @@ app.post("/bookings/:code/cancel", async (req, res) => {
   res.json({ booking: publicBooking(booking) });
 });
 
-app.post("/checkin", async (req, res) => {
+app.post("/checkin", requireRoles("ADMIN", "STAFF"), async (req, res) => {
   const codeOrTicket = req.body.codeOrTicket ?? "";
   const booking = [...bookings.values()].find(
     (item) => item.code === codeOrTicket || item.tickets.some((ticket) => ticket.id === codeOrTicket)
@@ -419,7 +476,7 @@ app.post("/checkin", async (req, res) => {
   res.json({ booking: publicBooking(booking) });
 });
 
-app.post("/admin/block-seats", async (req, res) => {
+app.post("/admin/block-seats", requireRoles("ADMIN", "STAFF"), async (req, res) => {
   try {
     const result = await grpcCall("blockSeats", {
       tripId: req.body.tripId,
@@ -435,43 +492,52 @@ app.post("/admin/block-seats", async (req, res) => {
 app.post("/auth/register", async (req, res) => {
   const { email, password, name } = req.body;
   if (!email || !password || !name) return res.status(400).json({ error: "Name, email and password are required" });
+  if (String(password).length < 8) return res.status(400).json({ error: "Password must contain at least 8 characters" });
   if (findUserByEmail(email)) return res.status(409).json({ error: "Email already exists" });
   const id = `customer-${Date.now()}`;
-  const user = { id, email, password, role: "CUSTOMER", name, savedPassengers: [] };
+  const user = { id, email, password: await hashPassword(password), role: "CUSTOMER", name, savedPassengers: [] };
   users.set(id, user);
   await saveUser(database, user);
-  res.status(201).json({ user: publicUser(user) });
+  res.status(201).json({ user: publicUser(user), accessToken: issueAccessToken(user) });
 });
 
-app.post("/auth/login", (req, res) => {
+app.post("/auth/login", async (req, res) => {
   const { email, password } = req.body;
   const user = findUserByEmail(email);
-  if (user && user.password === password) return res.json({ user: publicUser(user) });
-  res.status(401).json({ error: "Invalid credentials" });
+  if (!user || !(await verifyPassword(password, user.password))) return res.status(401).json({ error: "Invalid credentials" });
+  if (!isPasswordHash(user.password)) {
+    user.password = await hashPassword(password);
+    await saveUser(database, user);
+  }
+  return res.json({ user: publicUser(user), accessToken: issueAccessToken(user) });
 });
 
-app.post("/auth/admin-login", (req, res) => {
+app.post("/auth/admin-login", async (req, res) => {
   const { email, password } = req.body;
   const user = findUserByEmail(email);
-  if (!user || user.password !== password) return res.status(401).json({ error: "Invalid credentials" });
+  if (!user || !(await verifyPassword(password, user.password))) return res.status(401).json({ error: "Invalid credentials" });
   if (!["ADMIN", "STAFF"].includes(user.role)) return res.status(403).json({ error: "Admin or staff role is required" });
-  res.json({ user: publicUser(user) });
+  if (!isPasswordHash(user.password)) {
+    user.password = await hashPassword(password);
+    await saveUser(database, user);
+  }
+  res.json({ user: publicUser(user), accessToken: issueAccessToken(user) });
 });
 
-app.get("/users/:id/bookings", (req, res) => {
+app.get("/users/:id/bookings", requireCurrentUser, (req, res) => {
   const user = users.get(req.params.id);
   if (!user) return res.status(404).json({ error: "User not found" });
   const userBookings = [...bookings.values()].filter((booking) => booking.userId === user.id);
   res.json({ bookings: userBookings.map(publicBooking) });
 });
 
-app.get("/users/:id/passengers", (req, res) => {
+app.get("/users/:id/passengers", requireCurrentUser, (req, res) => {
   const user = users.get(req.params.id);
   if (!user) return res.status(404).json({ error: "User not found" });
   res.json({ passengers: user.savedPassengers });
 });
 
-app.post("/users/:id/passengers", async (req, res) => {
+app.post("/users/:id/passengers", requireCurrentUser, async (req, res) => {
   const user = users.get(req.params.id);
   if (!user) return res.status(404).json({ error: "User not found" });
   const passenger = {
@@ -486,7 +552,7 @@ app.post("/users/:id/passengers", async (req, res) => {
   res.status(201).json({ passenger });
 });
 
-app.delete("/users/:id/passengers/:passengerId", async (req, res) => {
+app.delete("/users/:id/passengers/:passengerId", requireCurrentUser, async (req, res) => {
   const user = users.get(req.params.id);
   if (!user) return res.status(404).json({ error: "User not found" });
   user.savedPassengers = user.savedPassengers.filter((passenger) => passenger.id !== req.params.passengerId);

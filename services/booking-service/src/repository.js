@@ -15,6 +15,7 @@ function bookingFromRow(row) {
     dropoff: row.dropoff,
     vehiclePlate: row.vehicle_plate,
     holdToken: row.hold_token,
+    guestAccessTokenHash: row.guest_access_token_hash,
     customerEmail: row.customer_email,
     customerPhone: row.customer_phone,
     userId: row.user_id,
@@ -107,19 +108,20 @@ export async function saveBooking(pool, booking) {
   if (!pool) return;
   await pool.query(
     `INSERT INTO bookings (
-      code, trip_id, route_name, departure_time, pickup, dropoff, vehicle_plate, hold_token,
+      code, trip_id, route_name, departure_time, pickup, dropoff, vehicle_plate, hold_token, guest_access_token_hash,
       customer_email, customer_phone, user_id, seat_ids, passengers, total_amount, status,
       tickets, created_at, updated_at, paid_at, checked_in_at, cancelled_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb, $14, $15,
-      $16::jsonb, $17, $18, $19, $20, $21
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15, $16,
+      $17::jsonb, $18, $19, $20, $21, $22
     ) ON CONFLICT (code) DO UPDATE SET
       seat_ids = EXCLUDED.seat_ids, passengers = EXCLUDED.passengers, total_amount = EXCLUDED.total_amount,
       status = EXCLUDED.status, tickets = EXCLUDED.tickets, updated_at = EXCLUDED.updated_at,
       paid_at = EXCLUDED.paid_at, checked_in_at = EXCLUDED.checked_in_at, cancelled_at = EXCLUDED.cancelled_at`,
     [
       booking.code, booking.tripId, booking.routeName, booking.departureTime, booking.pickup, booking.dropoff,
-      booking.vehiclePlate, booking.holdToken, booking.customerEmail, booking.customerPhone, booking.userId || null,
+      booking.vehiclePlate, booking.holdToken, booking.guestAccessTokenHash ?? null,
+      booking.customerEmail, booking.customerPhone, booking.userId || null,
       JSON.stringify(booking.seatIds), JSON.stringify(booking.passengers), booking.totalAmount, booking.status,
       JSON.stringify(booking.tickets), booking.createdAt, booking.updatedAt, booking.paidAt ?? null,
       booking.checkedInAt ?? null, booking.cancelledAt ?? null

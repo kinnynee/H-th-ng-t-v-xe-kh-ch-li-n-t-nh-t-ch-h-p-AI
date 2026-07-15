@@ -21,7 +21,8 @@ export function validateBookingInput({ holdToken, customerEmail, customerPhone, 
     if (String(passenger?.fullName ?? "").trim().length < 2) return `Passenger ${seatId} must have a valid full name`;
     if (!isValidEmail(passenger?.email)) return `Passenger ${seatId} must have a valid email`;
     if (!isValidPhone(passenger?.phone)) return `Passenger ${seatId} must have a valid phone number`;
-    if (!/^[A-Za-z0-9-]{6,20}$/.test(String(passenger?.documentId ?? "").trim())) {
+    const documentId = String(passenger?.documentId ?? "").trim();
+    if (documentId && !/^[A-Za-z0-9-]{6,20}$/.test(documentId)) {
       return `Passenger ${seatId} must have a valid document ID`;
     }
   }

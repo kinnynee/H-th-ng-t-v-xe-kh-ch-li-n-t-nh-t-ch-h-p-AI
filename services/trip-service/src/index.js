@@ -6,6 +6,7 @@ import { publishKafka } from "@bus-ai/shared/broker";
 import { connectPostgres } from "@bus-ai/shared/postgres";
 import { errorHandler, notFoundHandler } from "@bus-ai/shared/http";
 import { bindGrpcServer, createServiceGrpcServer } from "@bus-ai/shared/grpc";
+import { assertAuthConfiguration, authenticate, authorize } from "@bus-ai/shared/auth";
 import * as tripRepository from "./repository.js";
 import { createTripService } from "./services/trip-service.js";
 import { createTripController } from "./controllers/trip-controller.js";
@@ -15,6 +16,18 @@ import { createHealthCheck } from "./health.js";
 const app = express();
 app.use(cors());
 app.use(express.json());
+assertAuthConfiguration();
+
+function requireRoles(...roles) {
+  return (req, res, next) => {
+    try {
+      req.user = authorize(authenticate(req.headers), roles);
+      next();
+    } catch (error) {
+      res.status(error.status ?? 401).json({ error: error.message });
+    }
+  };
+}
 
 const redis = await connectRedis(process.env.REDIS_URL, "trip-service");
 const database = await connectPostgres(process.env.DATABASE_URL, "trip-service");
@@ -65,7 +78,7 @@ app.get("/ready", async (_req, res) => {
   const health = await operationalHealth();
   res.status(health.ok ? 200 : 503).json({ service: "trip-service", ...health });
 });
-app.use(createTripRouter(createTripController(service)));
+app.use(createTripRouter(createTripController(service), { requireRoles }));
 app.use(notFoundHandler);
 app.use(errorHandler);
 

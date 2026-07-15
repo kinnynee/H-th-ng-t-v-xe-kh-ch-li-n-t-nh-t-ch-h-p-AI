@@ -1,12 +1,22 @@
 import grpc from "@grpc/grpc-js";
+import { AuthError, authenticate, authorize } from "@bus-ai/shared/auth";
 
 /** gRPC controller: converts protobuf calls to SeatInventory domain-service calls. */
 export function createSeatGrpcController(inventory) {
-  const invoke = (work) => async (call, callback) => {
+  const serviceIdentity = (call) => {
+    const authorization = call.metadata.get("authorization")[0];
+    return authorize(authenticate({ authorization }), ["SERVICE"]);
+  };
+
+  const invoke = (work, { serviceOnly = false } = {}) => async (call, callback) => {
     try {
+      if (serviceOnly) serviceIdentity(call);
       callback(null, await work(call.request));
     } catch (error) {
-      callback({ code: grpc.status.INTERNAL, message: error.message });
+      const code = error instanceof AuthError
+        ? (error.status === 403 ? grpc.status.PERMISSION_DENIED : grpc.status.UNAUTHENTICATED)
+        : grpc.status.INTERNAL;
+      callback({ code, message: error.message });
     }
   };
 
@@ -18,22 +28,22 @@ export function createSeatGrpcController(inventory) {
       customerEmail: request.customerEmail,
       idempotencyKey: request.idempotencyKey,
       ttlSeconds: request.ttlSeconds || 300
-    })),
+    }), { serviceOnly: true }),
     confirmSeats: invoke((request) => inventory.confirmSeats({
       tripId: request.tripId,
       seatIds: request.seatIds,
       holdToken: request.holdToken,
       bookingCode: request.bookingCode
-    })),
+    }), { serviceOnly: true }),
     releaseSeats: invoke((request) => inventory.releaseSeats({
       tripId: request.tripId,
       seatIds: request.seatIds,
       holdToken: request.holdToken
-    })),
+    }), { serviceOnly: true }),
     blockSeats: invoke((request) => inventory.blockSeats({
       tripId: request.tripId,
       seatIds: request.seatIds,
       blocked: request.blocked
-    }))
+    }), { serviceOnly: true })
   };
 }

@@ -11,6 +11,7 @@
     "./postgres": "./src/postgres.js",
     "./migrations": "./src/migrations.js",
     "./http": "./src/http.js",
+    "./auth": "./src/auth.js",
     "./grpc": "./src/grpc.js"
   },
   "dependencies": {
