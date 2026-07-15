@@ -1,6 +1,4 @@
-import './globals.css';
-import SiteChrome from '../components/SiteChrome';
-import ChatWidget from '../components/ChatWidget';
+import "./globals.css";
 
 export const metadata = {
   title: "Vé xe liên tỉnh AI",
@@ -10,10 +8,7 @@ export const metadata = {
 export default function RootLayout({ children }) {
   return (
     <html lang="vi">
-      <body>
-        <SiteChrome>{children}</SiteChrome>
-        <ChatWidget />
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

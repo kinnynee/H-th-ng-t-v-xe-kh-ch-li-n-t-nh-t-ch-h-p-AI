@@ -1,89 +1,79 @@
-'use client';
-
-import { useEffect, useMemo, useState } from 'react';
-
-const MAX_SELECTED_SEATS = 4;
-
-function buildSeats(seatCount, bookedSeats) {
-  return Array.from({ length: seatCount }, (_, index) => {
-    const seatNumber = index + 1;
-    const id = `S${String(seatNumber).padStart(2, '0')}`;
-
-    return {
-      id,
-      status: bookedSeats.includes(id) ? 'booked' : 'available',
-    };
-  });
+function normalizedVehicleType(value) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
 }
 
-export default function SeatMap({ seatCount = 20, bookedSeats = [], onChange }) {
-  const [selectedSeats, setSelectedSeats] = useState([]);
-  const seats = useMemo(() => buildSeats(seatCount, bookedSeats), [seatCount, bookedSeats]);
+function layoutForVehicle(busType) {
+  const type = normalizedVehicleType(busType);
+  if (type.includes("giuong nam")) return { kind: "sleeper", label: "Giường nằm", pattern: [1, 3] };
+  if (type.includes("limousine")) return { kind: "premium", label: "Limousine", pattern: [1, 3] };
+  return { kind: "seater", label: "Ghế ngồi", pattern: [1, 2, 4, 5] };
+}
 
-  useEffect(() => {
-    onChange?.(selectedSeats);
-  }, [onChange, selectedSeats]);
+function statusLabel(status) {
+  return {
+    AVAILABLE: "Trống",
+    HELD: "Đang giữ",
+    BOOKED: "Đã đặt",
+    BLOCKED: "Đã khóa"
+  }[status] ?? status;
+}
 
-  const toggleSeat = (seat) => {
-    if (seat.status === 'booked') return;
+function seatGroups(seats, layout) {
+  const ordered = [...seats].sort((left, right) => left.label.localeCompare(right.label, "en"));
+  if (layout.kind !== "sleeper") return [{ id: "main", label: layout.label, seats: ordered }];
+  return [1, 2]
+    .map((floor) => ({
+      id: `floor-${floor}`,
+      label: floor === 1 ? "Tầng dưới" : "Tầng trên",
+      seats: ordered.filter((seat) => Number(seat.floor) === floor)
+    }))
+    .filter((group) => group.seats.length > 0);
+}
 
-    setSelectedSeats((current) => {
-      if (current.includes(seat.id)) {
-        return current.filter((seatId) => seatId !== seat.id);
-      }
-
-      if (current.length >= MAX_SELECTED_SEATS) {
-        return current;
-      }
-
-      return [...current, seat.id];
-    });
-  };
+/** Visual seat layout while the service remains the source of truth for availability. */
+export default function SeatMap({ busType, seats = [], selected = [], onToggle }) {
+  const layout = layoutForVehicle(busType);
+  const groups = seatGroups(seats, layout);
 
   return (
-    <div>
-      <div className="seat-legend" aria-label="Chú thích trạng thái ghế">
-        <span>
-          <i className="seat-dot seat-dot--available" /> Trống
-        </span>
-        <span>
-          <i className="seat-dot seat-dot--selected" /> Đang chọn
-        </span>
-        <span>
-          <i className="seat-dot seat-dot--booked" /> Đã đặt
-        </span>
+    <section className="seat-map" aria-label={`Sơ đồ ghế ${layout.label}`}>
+      <div className="seat-map__legend" aria-label="Chú thích trạng thái ghế">
+        {["AVAILABLE", "HELD", "BOOKED", "BLOCKED"].map((status) => (
+          <span className={`seat-legend seat-legend--${status.toLowerCase()}`} key={status}>
+            {statusLabel(status)}
+          </span>
+        ))}
       </div>
-
-      <div className="seat-map">
-        {seats.map((seat) => {
-          const isSelected = selectedSeats.includes(seat.id);
-          const isBooked = seat.status === 'booked';
-          const className = isBooked
-            ? 'seat seat--booked'
-            : isSelected
-              ? 'seat seat--selected'
-              : 'seat seat--available';
-          const isSelectionFull = selectedSeats.length >= MAX_SELECTED_SEATS && !isSelected;
-
-          return (
-            <button
-              key={seat.id}
-              type="button"
-              className={className}
-              onClick={() => toggleSeat(seat)}
-              disabled={isBooked || isSelectionFull}
-              aria-pressed={isSelected}
-            >
-              {seat.id}
-            </button>
-          );
-        })}
+      <div className={`seat-layout seat-layout--${layout.kind}`}>
+        <div className="seat-layout__front">Đầu xe</div>
+        {groups.map((group) => (
+          <section className="seat-layout__section" key={group.id} aria-label={group.label}>
+            <h3>{group.label}</h3>
+            <div className={`seat-grid seat-grid--${layout.kind}`}>
+              {group.seats.map((seat, index) => {
+                const isSelected = selected.includes(seat.id);
+                const selectable = seat.status === "AVAILABLE" || isSelected;
+                return (
+                  <button
+                    className={`seat-button ${seat.status.toLowerCase()} ${isSelected ? "selected" : ""}`}
+                    key={seat.id}
+                    onClick={() => onToggle(seat)}
+                    disabled={!selectable}
+                    aria-pressed={isSelected}
+                    title={`${seat.label} — ${statusLabel(seat.status)}`}
+                    style={{ gridColumn: layout.pattern[index % layout.pattern.length] }}
+                  >
+                    {seat.label}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        ))}
       </div>
-
-      <p className="seat-note">
-        Ghế đã chọn: <strong>{selectedSeats.length ? selectedSeats.join(', ') : 'chưa có'}</strong>
-      </p>
-      <p className="seat-note">Bạn có thể chọn tối đa {MAX_SELECTED_SEATS} ghế.</p>
-    </div>
+    </section>
   );
 }

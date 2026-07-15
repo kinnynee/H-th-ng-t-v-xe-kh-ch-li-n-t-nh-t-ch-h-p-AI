@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package bus.platform.v1;
+
+// Operational router registered by every non-AI service. It deliberately keeps
+// transport/observability concerns separate from the service's domain API.
+service ServiceRouter {
+  // Unary RPC.
+  rpc GetServiceInfo(ServiceInfoRequest) returns (ServiceInfoResponse);
+
+  // Server-streaming RPC.
+  rpc WatchServiceStatus(WatchServiceStatusRequest) returns (stream ServiceInfoResponse);
+
+  // Client-streaming RPC.
+  rpc ReportSignals(stream ServiceSignal) returns (ServiceSignalSummary);
+
+  // Bidirectional-streaming RPC.
+  rpc ConnectSignals(stream ServiceSignal) returns (stream ServiceSignalAck);
+}
+
+message ServiceInfoRequest {}
+
+message WatchServiceStatusRequest {
+  // The server clamps this value to a safe range.
+  int32 interval_seconds = 1;
+}
+
+message ServiceInfoResponse {
+  string service_name = 1;
+  bool ok = 2;
+  string status = 3;
+  string checked_at = 4;
+  map<string, string> details = 5;
+  string message = 6;
+}
+
+message ServiceSignal {
+  string type = 1;
+  string payload_json = 2;
+  string sent_at = 3;
+}
+
+message ServiceSignalSummary {
+  string service_name = 1;
+  int32 received_count = 2;
+  repeated string signal_types = 3;
+  string last_received_at = 4;
+}
+
+message ServiceSignalAck {
+  string service_name = 1;
+  string type = 2;
+  int32 sequence = 3;
+  string received_at = 4;
+}

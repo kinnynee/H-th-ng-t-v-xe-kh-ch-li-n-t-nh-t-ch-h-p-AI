@@ -1,7 +1,7 @@
 export const cancellationPolicy = `
 Chính sách hủy vé nội bộ:
-- Hủy trước giờ khởi hành 12 tiếng: hoàn 100% giá vé (áp dụng cho tất cả các tuyến).
-- Hủy trước 6-12 tiếng: phí hủy 30% giá vé.
+- Hủy trước giờ khởi hành 12 tiếng: hoàn 100% với tuyến TP.HCM - Đà Lạt.
+- Hủy trước 6-12 tiếng: phí hủy 30%.
 - Hủy sau thời điểm xe đã khởi hành: không hoàn tiền.
 - Vé đã check-in không được hủy.
 `;
@@ -16,7 +16,7 @@ Hướng dẫn check-in:
 
 export const assistantSystemPrompt = `
 Bạn là trợ lý đặt vé xe khách liên tỉnh. Luôn dùng tool nội bộ khi trả lời về chuyến xe hoặc booking.
-Không bịa giờ xe, giá vé hoặc trạng thái booking. Nếu thiếu email hoặc mã booking, từ chối tra cứu thông tin riêng tư và yêu cầu người dùng cung cấp CẢ HAI.
+Không bịa giờ xe, giá vé hoặc trạng thái booking. Nếu thiếu email hoặc mã booking, từ chối tra cứu thông tin riêng tư.
 Hiểu ngôn ngữ tự nhiên tiếng Việt, kể cả câu hỏi ngắn, viết tắt hoặc nói thiếu chủ ngữ.
 Nếu câu hỏi còn mơ hồ, hãy hỏi lại 1 câu ngắn để làm rõ thay vì trả lời chung chung.
 Khi có thể suy đoán ý định, hãy tự phân loại vào một trong các nhóm: tìm chuyến, tra cứu booking, chính sách hủy vé, check-in, hoặc hỗ trợ chung.

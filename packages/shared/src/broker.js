@@ -3,6 +3,12 @@ import { randomUUID } from "node:crypto";
 const rabbitState = { connection: null, channel: null };
 const kafkaState = { kafka: null, producer: null };
 
+/** Produces a topic-safe, exact-match routing key for one trip's live seat updates. */
+export function seatChangedRoutingKey(tripId) {
+  const encodedTripId = Buffer.from(String(tripId ?? ""), "utf8").toString("base64url");
+  return `seat.changed.${encodedTripId}`;
+}
+
 export function eventEnvelope(eventType, payload, correlationId) {
   return {
     eventId: randomUUID(),
@@ -19,7 +25,7 @@ async function getRabbitChannel() {
   if (rabbitState.channel) return rabbitState.channel;
   const amqp = await import("amqplib");
   rabbitState.connection = await amqp.connect(process.env.RABBITMQ_URL);
-  rabbitState.channel = await rabbitState.connection.createChannel();
+  rabbitState.channel = await rabbitState.connection.createConfirmChannel();
   await rabbitState.channel.assertExchange("bus.events", "topic", { durable: true });
   return rabbitState.channel;
 }
@@ -30,31 +36,36 @@ export async function publishRabbit(eventType, payload, routingKey = eventType) 
     const channel = await getRabbitChannel();
     if (!channel) {
       console.log(`[rabbit:fallback] ${routingKey}`, JSON.stringify(envelope));
-      return envelope;
+      return { ...envelope, published: false };
     }
     channel.publish("bus.events", routingKey, Buffer.from(JSON.stringify(envelope)), {
       contentType: "application/json",
       persistent: true
     });
-    return envelope;
+    await channel.waitForConfirms();
+    return { ...envelope, published: true };
   } catch (error) {
     console.warn(`[rabbit:fallback] ${routingKey}: ${error.message}`);
-    return envelope;
+    return { ...envelope, published: false };
   }
 }
 
-export async function subscribeRabbit(queueName, bindingKeys, handler) {
+export async function subscribeRabbit(queueName, bindingKeys, handler, queueOptions = {}) {
   try {
     const channel = await getRabbitChannel();
     if (!channel) {
       console.log(`[rabbit:fallback] subscriber ${queueName} waiting for real RabbitMQ`);
-      return;
+      return null;
     }
-    const queue = await channel.assertQueue(queueName, { durable: true });
+    const queue = await channel.assertQueue(queueName, {
+      durable: queueOptions.durable ?? true,
+      exclusive: queueOptions.exclusive ?? false,
+      autoDelete: queueOptions.autoDelete ?? false
+    });
     for (const key of bindingKeys) {
       await channel.bindQueue(queue.queue, "bus.events", key);
     }
-    await channel.consume(queue.queue, async (message) => {
+    const consumer = await channel.consume(queue.queue, async (message) => {
       if (!message) return;
       try {
         const event = JSON.parse(message.content.toString("utf8"));
@@ -65,10 +76,65 @@ export async function subscribeRabbit(queueName, bindingKeys, handler) {
         channel.nack(message, false, false);
       }
     });
-    console.log(`[rabbit] ${queueName} subscribed to ${bindingKeys.join(", ")}`);
+    console.log(`[rabbit] ${queue.queue} subscribed to ${bindingKeys.join(", ")}`);
+    return {
+      queueName: queue.queue,
+      cancel: () => channel.cancel(consumer.consumerTag)
+    };
   } catch (error) {
     console.warn(`[rabbit:fallback] subscriber ${queueName}: ${error.message}`);
+    return null;
   }
+}
+
+/**
+ * Creates a short-lived queue backed by RabbitMQ for one live client.
+ * Live updates are intentionally not replayed; callers should fetch the latest
+ * seat map when a client connects or reconnects.
+ */
+export async function subscribeRabbitEphemeral(bindingKeys, { maxBufferSize = 100 } = {}) {
+  const buffered = [];
+  const waiters = [];
+  let closed = false;
+
+  const finish = () => {
+    if (closed) return;
+    closed = true;
+    buffered.length = 0;
+    while (waiters.length) waiters.shift()({ value: undefined, done: true });
+  };
+  const push = (event) => {
+    if (closed) return;
+    if (waiters.length) {
+      waiters.shift()({ value: event, done: false });
+      return;
+    }
+    if (buffered.length >= maxBufferSize) buffered.shift();
+    buffered.push(event);
+  };
+
+  const consumer = await subscribeRabbit("", bindingKeys, push, {
+    durable: false,
+    exclusive: true,
+    autoDelete: true
+  });
+  if (!consumer) return null;
+
+  return {
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+    next() {
+      if (buffered.length) return Promise.resolve({ value: buffered.shift(), done: false });
+      if (closed) return Promise.resolve({ value: undefined, done: true });
+      return new Promise((resolve) => waiters.push(resolve));
+    },
+    async return() {
+      finish();
+      await consumer.cancel().catch(() => {});
+      return { value: undefined, done: true };
+    }
+  };
 }
 
 async function getKafkaProducer() {

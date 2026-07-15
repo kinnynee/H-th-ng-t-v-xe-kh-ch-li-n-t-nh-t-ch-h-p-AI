@@ -126,6 +126,7 @@ export default function AdminPage() {
   const [ops, setOps] = useState({ tripId: "", seatIds: "A01", codeOrTicket: "" });
   const [tripBookings, setTripBookings] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [message, setMessage] = useState("");
 
   async function load() {
     setIsLoading(true);
