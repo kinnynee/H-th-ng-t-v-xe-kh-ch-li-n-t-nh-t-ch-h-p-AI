@@ -8,6 +8,7 @@ import { publishKafka, publishRabbit } from "@bus-ai/shared/broker";
 import { connectPostgres } from "@bus-ai/shared/postgres";
 import { bindGrpcServer, createServiceGrpcServer } from "@bus-ai/shared/grpc";
 import { demoUsers } from "./demo-users.js";
+import { validateBookingInput } from "./validation.js";
 import {
   loadBookingRepository,
   saveBooking,
@@ -274,10 +275,11 @@ app.post("/holds", async (req, res) => {
 
 app.post("/bookings", async (req, res) => {
   try {
-    const trip = await getTrip(req.body.tripId);
     const passengers = req.body.passengers ?? [];
-    const seatIds = passengers.map((passenger) => passenger.seatId);
-    if (seatIds.length === 0) return res.status(400).json({ error: "Booking requires at least one seat" });
+    const validationError = validateBookingInput({ ...req.body, passengers });
+    if (validationError) return res.status(400).json({ error: validationError });
+    const trip = await getTrip(req.body.tripId);
+    const seatIds = passengers.map((passenger) => String(passenger.seatId).trim().toUpperCase());
     const code = bookingCode();
     const booking = {
       code,

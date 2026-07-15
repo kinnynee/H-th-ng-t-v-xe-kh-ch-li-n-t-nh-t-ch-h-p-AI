@@ -1,6 +1,7 @@
 import { buildTrips } from "@bus-ai/shared/seed";
 import { connectRedis, createCacheAdapter } from "@bus-ai/shared/cache";
 import { connectPostgres } from "@bus-ai/shared/postgres";
+import { publishRabbit, seatChangedRoutingKey } from "@bus-ai/shared/broker";
 import { bindGrpcServer, createServiceGrpcServer, loadGrpcProto } from "@bus-ai/shared/grpc";
 import { createSeatInventory } from "./core.js";
 import { loadSeatState, saveSeatState } from "./repository.js";
@@ -16,7 +17,12 @@ const inventory = createSeatInventory({
   cache: createCacheAdapter(redis),
   trips: buildTrips(),
   initialState,
-  persistState: (state) => saveSeatState(database, state)
+  persistState: (state) => saveSeatState(database, state),
+  onSeatChanged: ({ tripId, seats, message }) => publishRabbit(
+    "SeatChanged",
+    { tripId, seats, message },
+    seatChangedRoutingKey(tripId)
+  )
 });
 
 const server = createServiceGrpcServer({

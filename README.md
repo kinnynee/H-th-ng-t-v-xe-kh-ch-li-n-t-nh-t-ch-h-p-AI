@@ -88,6 +88,9 @@ npm test
 ```
 
 Test `seat-race.test.js` mô phỏng hai người cùng giữ ghế A01 trong cùng một chuyến; chỉ một request thành công.
+Test cũng bao phủ việc nhả ghế, hết TTL và phát sự kiện realtime. `booking-validation.test.js`
+kiểm tra đầy đủ họ tên, email, số điện thoại, giấy tờ, hold token và ghế trùng trước
+khi booking được tạo.
 
 ## Tài khoản demo
 

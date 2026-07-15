@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Armchair, CalendarDays, CheckCircle2, CreditCard, MapPin, RefreshCw, Ticket, Timer, UserCheck } from "lucide-react";
 import ChatWidget from "../../../components/ChatWidget";
+import SeatMap from "../../../components/SeatMap";
 import SiteChrome from "../../../components/SiteChrome";
 import { gql, money, shortDateTime, subscribeToSeatChanges } from "../../../lib/graphql";
 
@@ -84,11 +85,15 @@ export default function TripDetail() {
   ), [tripId]);
 
   useEffect(() => {
-    if (!hold?.ok || holdRemaining <= 0) return;
+    if (!hold?.ok) return;
     const timer = setInterval(() => {
       setHoldRemaining((current) => {
         if (current <= 1) {
           clearInterval(timer);
+          setHold(null);
+          setSelected([]);
+          setPassengers({});
+          setError("Thời gian giữ ghế đã hết hạn. Vui lòng chọn lại ghế.");
           load().catch(() => null);
           return 0;
         }
@@ -96,7 +101,7 @@ export default function TripDetail() {
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [hold?.ok, holdRemaining]);
+  }, [hold?.ok]);
 
   useEffect(() => {
     const raw = localStorage.getItem("busUser");
@@ -117,6 +122,14 @@ export default function TripDetail() {
   }
 
   async function holdSeats() {
+    if (selected.length === 0) {
+      setError("Vui lòng chọn ít nhất một ghế trước khi giữ chỗ.");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customer.email) || !/^(?:\+?84|0)\d{9,10}$/.test(customer.phone.replace(/[.\s-]/g, ""))) {
+      setError("Vui lòng nhập email và số điện thoại nhận vé hợp lệ.");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
@@ -149,6 +162,20 @@ export default function TripDetail() {
   }
 
   async function createBooking() {
+    if (!hold?.ok || !hold.holdToken || holdRemaining <= 0 || selected.length === 0) {
+      setError("Phiên giữ ghế không còn hợp lệ. Vui lòng chọn và giữ ghế lại.");
+      return;
+    }
+    for (const seatId of selected) {
+      const passenger = passengers[seatId] ?? {};
+      const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(passenger.email ?? "").trim());
+      const validPhone = /^(?:\+?84|0)\d{9,10}$/.test(String(passenger.phone ?? "").replace(/[.\s-]/g, ""));
+      const validDocument = /^[A-Za-z0-9-]{6,20}$/.test(String(passenger.documentId ?? "").trim());
+      if (String(passenger.fullName ?? "").trim().length < 2 || !validEmail || !validPhone || !validDocument) {
+        setError("Mỗi hành khách cần có họ tên, email, số điện thoại và giấy tờ hợp lệ.");
+        return;
+      }
+    }
     setBusy(true);
     setError("");
     try {
@@ -171,6 +198,10 @@ export default function TripDetail() {
   }
 
   async function pay(success) {
+    if (!booking || selected.length === 0) {
+      setError("Không thể thanh toán khi booking không có ghế.");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
@@ -243,18 +274,12 @@ export default function TripDetail() {
                   <Armchair size={16} /> {trip.availableSeats} ghế trống
                 </span>
               </div>
-              <div className="seat-grid">
-                {trip.seats.map((seat) => (
-                  <button
-                    className={`seat-button ${seat.status.toLowerCase()} ${selected.includes(seat.id) ? "selected" : ""}`}
-                    key={seat.id}
-                    onClick={() => toggleSeat(seat)}
-                    title={`${seat.label} - ${seat.status}`}
-                  >
-                    {seat.label}
-                  </button>
-                ))}
-              </div>
+              <SeatMap
+                busType={trip.busType}
+                seats={trip.seats}
+                selected={selected}
+                onToggle={toggleSeat}
+              />
             </div>
           </div>
 

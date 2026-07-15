@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import { createSchema, createYoga } from "graphql-yoga";
+import { seatChangedRoutingKey, subscribeRabbitEphemeral } from "@bus-ai/shared/broker";
 
 const tripUrl = process.env.TRIP_SERVICE_URL || "http://localhost:4010";
 const bookingUrl = process.env.BOOKING_SERVICE_URL || "http://localhost:4020";
@@ -503,8 +504,11 @@ const resolvers = {
   },
   Subscription: {
     seatChanged: {
-      subscribe: (_parent, { tripId }) => pubSub.subscribe(`seat:${tripId}`),
-      resolve: (event) => event
+      subscribe: async (_parent, { tripId }) => {
+        const rabbitSubscription = await subscribeRabbitEphemeral([seatChangedRoutingKey(tripId)]);
+        return rabbitSubscription ?? pubSub.subscribe(`seat:${tripId}`);
+      },
+      resolve: (event) => event.payload ?? event
     }
   },
   Trip: {
