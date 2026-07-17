@@ -46,7 +46,10 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const locationNames = useMemo(() => catalog.locations.map((item) => item.name), [catalog]);
+  const locationNames = useMemo(
+    () => [...new Set(catalog.locations.flatMap((item) => [item.name, ...(item.stations ?? [])]))],
+    [catalog]
+  );
 
   async function loadCatalog() {
     const data = await gql(CATALOG);
