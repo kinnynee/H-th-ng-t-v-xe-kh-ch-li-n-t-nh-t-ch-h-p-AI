@@ -127,9 +127,9 @@ services:
     envVars:
       - key: RABBITMQ_URL
         value: amqp://guest:guest@rabbitmq:5672
-      - key: GMAIL_USER
+      - key: SMTP_URL
         sync: false
-      - key: GMAIL_APP_PASSWORD
+      - key: SMTP_FROM
         sync: false
 
   - type: web
