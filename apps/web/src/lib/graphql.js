@@ -4,7 +4,8 @@ export function getGraphQLEndpoint() {
   if (typeof window === "undefined") {
     return process.env.GRAPHQL_URL || process.env.NEXT_PUBLIC_GRAPHQL_URL || "http://localhost:4000/graphql";
   }
-  return process.env.NEXT_PUBLIC_GRAPHQL_URL || "http://localhost:4000/graphql";
+  // Trình duyệt sẽ gọi thẳng vào /graphql (Next.js rewrites sẽ proxy sang port 4000)
+  return "/graphql";
 }
 
 function guestAccessStorageKey(code) {
