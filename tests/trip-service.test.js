@@ -6,6 +6,7 @@ import { createTripService } from "../services/trip-service/src/services/trip-se
 
 function serviceFixture({ now = () => Date.parse("2026-07-17T10:00:00+07:00") } = {}) {
   const writes = [];
+  const events = [];
   const stores = {
     routes: new Map(routes.map((route) => [route.id, { ...route }])),
     vehicles: new Map(vehicles.map((vehicle) => [vehicle.id, { ...vehicle }])),
@@ -23,15 +24,16 @@ function serviceFixture({ now = () => Date.parse("2026-07-17T10:00:00+07:00") } 
       operators,
       cache: createMemoryTTLStore(),
       repository,
-      publishEvent: async () => {},
+      publishEvent: async (eventType, payload, topic) => events.push({ eventType, payload, topic }),
       now
     }),
-    writes
+    writes,
+    events
   };
 }
 
 test("trip application service owns validation, persistence and search caching", async () => {
-  const { service, writes } = serviceFixture();
+  const { service, writes, events } = serviceFixture();
   const stop = await service.createStop({ city: "TP.HCM", name: "Bến test" });
   assert.equal(stop.name, "Bến test");
   assert.equal(service.catalog().locations.find((item) => item.name === "TP.HCM").stations.includes("Bến test"), true);
@@ -42,6 +44,9 @@ test("trip application service owns validation, persistence and search caching",
   assert.equal(second.cache, "HIT");
   assert.ok(first.trips.length > 0);
   assert.equal(writes.some((item) => item.name === "saveStop"), true);
+  const searchEvents = events.filter((event) => event.eventType === "TripSearchPerformed");
+  assert.equal(searchEvents.length, 2);
+  assert.deepEqual(searchEvents.map((event) => event.payload.cache), ["MISS", "HIT"]);
 });
 
 test("customer searches hide departed trips while admin searches retain them", async () => {

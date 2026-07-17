@@ -661,6 +661,33 @@ export default function AdminPage() {
           </section>
         )}
 
+        {summary && user?.role === "ADMIN" && (
+          <section className="panel admin-section-panel admin-section-overview">
+            <div className="panel-header">
+              <h2>Doanh thu theo ngày</h2>
+              <p>Tổng doanh thu và số vé từ các thanh toán thành công.</p>
+            </div>
+            <div className="panel-body">
+              {summary.revenueByDay.length === 0 ? <div className="empty">Chưa có thanh toán thành công.</div> : (
+                <div style={{ overflowX: "auto" }}>
+                  <table className="table">
+                    <thead><tr><th>Ngày</th><th>Doanh thu</th><th>Vé đã bán</th></tr></thead>
+                    <tbody>
+                      {summary.revenueByDay.map((item) => (
+                        <tr key={item.date}>
+                          <td>{item.date}</td>
+                          <td>{money(item.revenue)}</td>
+                          <td>{item.tickets}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
         {user && data && (
           <section className="admin-workspace">
             <div className="stack" style={{ display: user.role === "ADMIN" ? undefined : "none" }}>

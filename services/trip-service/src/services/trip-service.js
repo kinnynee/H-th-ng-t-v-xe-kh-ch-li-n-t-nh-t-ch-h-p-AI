@@ -221,12 +221,22 @@ export function createTripService({ stores, locations, operators, cache, reposit
       const nowMs = now();
       const cacheWindow = query.includeInactive === "true" ? "admin" : Math.floor(nowMs / 60_000);
       const cacheKey = `trip-search:${cacheEpoch}:${cacheWindow}:${JSON.stringify(query)}`;
+      const recordSearch = (resultCount, cache) => publishEvent("TripSearchPerformed", {
+        from: query.from ?? "",
+        to: query.to ?? "",
+        date: query.date ?? "",
+        resultCount,
+        cache
+      }, "search-events");
       const cached = await cache.get(cacheKey);
-      if (cached) return { ...cached, cache: "HIT" };
+      if (cached) {
+        await recordSearch(cached.trips.length, "HIT");
+        return { ...cached, cache: "HIT" };
+      }
       const trips = sortTrips([...stores.trips.values()].filter((trip) => matches(trip, query, nowMs)), query.sort);
       const payload = { trips, suggestionDate: trips.length ? null : suggestion(query, nowMs), cache: "MISS" };
       await cache.set(cacheKey, payload, 60);
-      await publishEvent("TripSearchPerformed", { from: query.from ?? "", to: query.to ?? "", date: query.date ?? "", resultCount: trips.length }, "search-events");
+      await recordSearch(trips.length, "MISS");
       return payload;
     },
     getTrip(id) {
