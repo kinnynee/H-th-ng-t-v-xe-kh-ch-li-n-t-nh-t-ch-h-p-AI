@@ -69,11 +69,15 @@ async function searchTrips({ from = "", to = "", date = "", timeFrom = "" }) {
   return requestJSON(`${tripUrl}/trips?${params}`);
 }
 
-async function getBookingStatus({ bookingCode, email }) {
-  if (!bookingCode || !email) {
-    return { error: "Cần cả mã booking và email để tra cứu thông tin riêng tư." };
+async function getBookingStatus({ bookingCode }, accessHeaders = {}) {
+  if (!bookingCode) {
+    return { error: "Cần mã booking để tra cứu thông tin." };
   }
-  return requestJSON(`${bookingUrl}/bookings/${bookingCode}?email=${encodeURIComponent(email)}`);
+  try {
+    return await requestJSON(`${bookingUrl}/bookings/${bookingCode}`, { headers: accessHeaders });
+  } catch {
+    return { error: "Bạn cần đăng nhập hoặc mở liên kết truy cập an toàn của booking này." };
+  }
 }
 
 function routeFromText(message) {
@@ -140,7 +144,7 @@ async function answerTripSearch(message) {
   };
 }
 
-async function fallbackAssistant({ message, bookingCode, email }) {
+async function fallbackAssistant({ message, bookingCode }, accessHeaders) {
   const text = fold(message);
   const sources = [];
   const toolCalls = [];
@@ -165,7 +169,7 @@ async function fallbackAssistant({ message, bookingCode, email }) {
 
   if (text.includes("booking") || bookingCode) {
     toolCalls.push("getBookingStatus");
-    const status = await getBookingStatus({ bookingCode, email });
+    const status = await getBookingStatus({ bookingCode }, accessHeaders);
     if (status.error) return { answer: status.error, sources, toolCalls };
     const booking = status.booking;
     return {
@@ -202,14 +206,14 @@ async function fallbackAssistant({ message, bookingCode, email }) {
   }
 
   return {
-    answer: "Bạn có thể tìm chuyến, chọn ghế, nhập thông tin hành khách, thanh toán mô phỏng rồi nhận vé điện tử. Mình cũng có thể tra cứu booking nếu bạn cung cấp mã booking và email.",
+    answer: "Bạn có thể tìm chuyến, chọn ghế, nhập thông tin hành khách, thanh toán mô phỏng rồi nhận vé điện tử. Mình cũng có thể tra cứu booking mà bạn đang được cấp quyền truy cập.",
     sources,
     toolCalls
   };
 }
 
-async function aiSdkAssistant(input) {
-  if (!process.env.OPENAI_API_KEY) return fallbackAssistant(input);
+async function aiSdkAssistant(input, accessHeaders) {
+  if (!process.env.OPENAI_API_KEY) return fallbackAssistant(input, accessHeaders);
   if (isTripSearchIntent(input.message)) {
     return answerTripSearch(input.message);
   }
@@ -236,12 +240,11 @@ async function aiSdkAssistant(input) {
           execute: searchTrips
         }),
         getBookingStatus: tool({
-          description: "Tra cứu trạng thái booking khi có mã booking và email.",
+          description: "Tra cứu trạng thái booking khi người dùng đang được cấp quyền truy cập.",
           parameters: z.object({
-            bookingCode: z.string(),
-            email: z.string().email()
+            bookingCode: z.string()
           }),
-          execute: getBookingStatus
+          execute: (input) => getBookingStatus(input, accessHeaders)
         })
       }
     });
@@ -252,7 +255,7 @@ async function aiSdkAssistant(input) {
     };
   } catch (error) {
     console.warn(`[ai-service] AI SDK fallback: ${error.message}`);
-    return fallbackAssistant(input);
+    return fallbackAssistant(input, accessHeaders);
   }
 }
 
@@ -262,7 +265,11 @@ app.get("/health", (_req, res) => {
 
 app.post("/chat", async (req, res) => {
   try {
-    res.json(await aiSdkAssistant(req.body));
+    const accessHeaders = {
+      ...(req.get("authorization") ? { authorization: req.get("authorization") } : {}),
+      ...(req.get("x-booking-access-token") ? { "x-booking-access-token": req.get("x-booking-access-token") } : {})
+    };
+    res.json(await aiSdkAssistant(req.body, accessHeaders));
   } catch (error) {
     res.status(500).json({ answer: error.message, sources: [], toolCalls: [] });
   }
