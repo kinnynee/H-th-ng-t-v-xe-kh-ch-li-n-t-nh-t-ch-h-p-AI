@@ -1,0 +1,143 @@
+services:
+  - type: pserv
+    name: redis
+    env: image
+    image:
+      url: docker.io/library/redis:7-alpine
+
+  - type: pserv
+    name: rabbitmq
+    env: image
+    image:
+      url: docker.io/library/rabbitmq:3-management-alpine
+
+  - type: pserv
+    name: kafka
+    env: image
+    image:
+      url: docker.io/apache/kafka:3.7.0
+    envVars:
+      - key: KAFKA_NODE_ID
+        value: "1"
+      - key: KAFKA_PROCESS_ROLES
+        value: "broker,controller"
+      - key: KAFKA_CONTROLLER_QUORUM_VOTERS
+        value: "1@localhost:9093"
+      - key: KAFKA_LISTENERS
+        value: "PLAINTEXT://:9092,CONTROLLER://:9093"
+      - key: KAFKA_ADVERTISED_LISTENERS
+        value: "PLAINTEXT://kafka:9092"
+      - key: KAFKA_CONTROLLER_LISTENER_NAMES
+        value: "CONTROLLER"
+      - key: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+        value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      - key: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+        value: "1"
+      - key: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+        value: "1"
+      - key: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+        value: "1"
+      - key: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS
+        value: "0"
+      - key: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+        value: "true"
+
+  - type: pserv
+    name: seat-service
+    env: docker
+    dockerCommand: npm run start -w services/seat-service
+    envVars:
+      - key: REDIS_URL
+        value: redis://redis:6379
+      - key: SEAT_GRPC_BIND
+        value: 0.0.0.0:50051
+
+  - type: web
+    name: trip-service
+    env: docker
+    dockerCommand: npm run start -w services/trip-service
+    envVars:
+      - key: REDIS_URL
+        value: redis://redis:6379
+      - key: KAFKA_BROKERS
+        value: kafka:9092
+
+  - type: web
+    name: booking-service
+    env: docker
+    dockerCommand: npm run start -w services/booking-service
+    envVars:
+      - key: SEAT_GRPC_URL
+        value: seat-service:50051
+      - key: TRIP_SERVICE_URL
+        value: http://trip-service:4010
+      - key: RABBITMQ_URL
+        value: amqp://guest:guest@rabbitmq:5672
+      - key: KAFKA_BROKERS
+        value: kafka:9092
+
+  - type: web
+    name: ai-service
+    env: docker
+    dockerCommand: npm run start -w services/ai-service
+    envVars:
+      - key: TRIP_SERVICE_URL
+        value: http://trip-service:4010
+      - key: BOOKING_SERVICE_URL
+        value: http://booking-service:4020
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4o-mini
+
+  - type: web
+    name: gateway
+    env: docker
+    dockerCommand: npm run start -w services/gateway
+    envVars:
+      - key: TRIP_SERVICE_URL
+        value: http://trip-service:4010
+      - key: BOOKING_SERVICE_URL
+        value: http://booking-service:4020
+      - key: AI_SERVICE_URL
+        value: http://ai-service:4100
+      - key: ANALYTICS_SERVICE_URL
+        value: http://analytics-worker:4050
+
+  - type: worker
+    name: analytics-worker
+    env: docker
+    dockerCommand: npm run start -w workers/analytics-worker
+    envVars:
+      - key: KAFKA_BROKERS
+        value: kafka:9092
+
+  - type: worker
+    name: ticket-worker
+    env: docker
+    dockerCommand: npm run start -w workers/ticket-worker
+    envVars:
+      - key: RABBITMQ_URL
+        value: amqp://guest:guest@rabbitmq:5672
+
+  - type: worker
+    name: email-worker
+    env: docker
+    dockerCommand: npm run start -w workers/email-worker
+    envVars:
+      - key: RABBITMQ_URL
+        value: amqp://guest:guest@rabbitmq:5672
+      - key: GMAIL_USER
+        sync: false
+      - key: GMAIL_APP_PASSWORD
+        sync: false
+
+  - type: web
+    name: web
+    env: docker
+    dockerCommand: npm run start -w apps/web
+    envVars:
+      - key: GRAPHQL_URL
+        value: http://gateway:4000/graphql
+      - key: NEXT_PUBLIC_GRAPHQL_URL
+        sync: false # Needs to be updated manually after deployment to point to the gateway's public render URL
