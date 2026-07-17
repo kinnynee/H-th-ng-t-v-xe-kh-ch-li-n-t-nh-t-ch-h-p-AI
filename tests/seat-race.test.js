@@ -116,3 +116,52 @@ test("uses a persisted seat catalog when one is provided", async () => {
   assert.deepEqual(map.seats.map((seat) => seat.id), ["C01", "C02"]);
   assert.deepEqual(map.seats.map((seat) => seat.status), ["AVAILABLE", "AVAILABLE"]);
 });
+
+test("retries a confirmed booking idempotently after its hold was consumed", async () => {
+  const inventory = createSeatInventory({ cache: createMemoryTTLStore() });
+  const tripId = "trip-hcm-dalat-early";
+  const hold = await inventory.holdSeats({
+    tripId,
+    seatIds: ["A05"],
+    customerEmail: "buyer@example.com",
+    idempotencyKey: "retryable-hold",
+    ttlSeconds: 300
+  });
+
+  assert.equal((await inventory.confirmSeats({
+    tripId,
+    seatIds: ["A05"],
+    holdToken: hold.holdToken,
+    bookingCode: "BK-RETRY"
+  })).ok, true);
+  assert.equal((await inventory.confirmSeats({
+    tripId,
+    seatIds: ["A05"],
+    holdToken: hold.holdToken,
+    bookingCode: "BK-RETRY"
+  })).ok, true);
+});
+
+test("does not alter local availability when durable confirmation rejects a race", async () => {
+  const inventory = createSeatInventory({
+    cache: createMemoryTTLStore(),
+    confirmAssignments: async () => ({ ok: false, message: "Seat was sold by another replica." })
+  });
+  const tripId = "trip-hcm-dalat-early";
+  const hold = await inventory.holdSeats({
+    tripId,
+    seatIds: ["A06"],
+    customerEmail: "buyer@example.com",
+    idempotencyKey: "rejected-confirmation",
+    ttlSeconds: 300
+  });
+
+  const result = await inventory.confirmSeats({
+    tripId,
+    seatIds: ["A06"],
+    holdToken: hold.holdToken,
+    bookingCode: "BK-CONFLICT"
+  });
+  assert.equal(result.ok, false);
+  assert.equal((await inventory.getSeatMap(tripId)).seats.find((seat) => seat.id === "A06").status, "HELD");
+});

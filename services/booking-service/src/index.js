@@ -4,7 +4,7 @@ import express from "express";
 import cors from "cors";
 import grpc from "@grpc/grpc-js";
 import protoLoader from "@grpc/proto-loader";
-import { publishKafka, publishRabbit } from "@bus-ai/shared/broker";
+import { eventEnvelope, publishKafkaEnvelope, publishRabbitEnvelope } from "@bus-ai/shared/broker";
 import { connectPostgres } from "@bus-ai/shared/postgres";
 import { bindGrpcServer, createServiceGrpcServer } from "@bus-ai/shared/grpc";
 import { assertAuthConfiguration, authenticate, authorize, hashPassword, isPasswordHash, issueAccessToken, verifyPassword } from "@bus-ai/shared/auth";
@@ -13,8 +13,13 @@ import { createGuestAccessToken, hashGuestAccessToken, verifiesGuestAccessToken 
 import { validateBookingInput } from "./validation.js";
 import {
   loadBookingRepository,
-  saveBooking,
-  saveUser
+  claimOutboxEvents,
+  createBookingWithOutbox,
+  findBooking,
+  markOutboxPublished,
+  releaseOutboxEvent,
+  saveUser,
+  transitionBookingWithOutbox
 } from "./repository.js";
 import { createHealthCheck } from "./health.js";
 
@@ -91,6 +96,87 @@ function publicBooking(booking) {
     ticketPdfUrl: `${publicBookingUrl}/tickets/${booking.code}.pdf`,
     passengers: booking.passengers.map((item) => ({ ...item }))
   };
+}
+
+function kafkaOutboxEvent(topic, eventType, payload) {
+  return {
+    destination: "kafka",
+    topic,
+    envelope: eventEnvelope(eventType, payload, payload.code)
+  };
+}
+
+function rabbitOutboxEvent(routingKey, eventType, payload) {
+  return {
+    destination: "rabbit",
+    topic: "bus.events",
+    routingKey,
+    envelope: eventEnvelope(eventType, payload, payload.code)
+  };
+}
+
+function seatOutboxEvent(method, payload, bookingCode) {
+  return {
+    destination: "seat",
+    topic: method,
+    envelope: eventEnvelope("SeatReleaseRequested", payload, bookingCode)
+  };
+}
+
+async function publishOutboxEvent(event) {
+  if (event.destination === "seat") {
+    const result = await grpcCall(event.topic, event.envelope.payload);
+    return { ...event.envelope, published: Boolean(result?.ok) };
+  }
+  if (event.destination === "rabbit") return publishRabbitEnvelope(event.envelope, event.routingKey);
+  return publishKafkaEnvelope(event.topic, event.envelope);
+}
+
+let flushingOutbox = false;
+async function flushOutbox() {
+  if (!database || flushingOutbox) return;
+  flushingOutbox = true;
+  try {
+    const events = await claimOutboxEvents(database);
+    for (const event of events) {
+      try {
+        const result = await publishOutboxEvent(event);
+        if (!result.published) throw new Error("Broker is unavailable");
+        await markOutboxPublished(database, event.eventId, event.lockToken);
+      } catch (error) {
+        await releaseOutboxEvent(database, event.eventId, event.lockToken, error);
+        console.warn(`[booking-service] outbox event ${event.eventId} was deferred: ${error.message}`);
+      }
+    }
+  } finally {
+    flushingOutbox = false;
+  }
+}
+
+function requestOutboxFlush() {
+  if (database) void flushOutbox().catch((error) => console.warn(`[booking-service] outbox flush failed: ${error.message}`));
+}
+
+async function deliverEvents(events) {
+  if (database) {
+    requestOutboxFlush();
+    return;
+  }
+  for (const event of events) await publishOutboxEvent(event);
+}
+
+async function commitBookingTransition(booking, expectedStatuses, events = []) {
+  const result = await transitionBookingWithOutbox(database, booking, expectedStatuses, events);
+  if (!result.updated) return null;
+  bookings.set(booking.code, result.booking);
+  await deliverEvents(events);
+  return result.booking;
+}
+
+async function currentBooking(code) {
+  const durable = await findBooking(database, code);
+  if (durable) bookings.set(code, durable);
+  return durable ?? bookings.get(code) ?? null;
 }
 
 function ticketHtml(booking) {
@@ -250,19 +336,26 @@ function schedulePendingExpiry(booking) {
   setTimeout(async () => {
     const current = bookings.get(booking.code);
     if (!current || current.status !== "PENDING_PAYMENT") return;
-    await grpcCall("releaseSeats", {
-      tripId: current.tripId,
-      seatIds: current.seatIds,
-      holdToken: current.holdToken
-    }).catch(() => null);
-    current.status = "EXPIRED";
-    current.updatedAt = new Date().toISOString();
-    await saveBooking(database, current);
-    await publishKafka("booking-events", "BookingExpired", publicBooking(current));
+    const expiredAt = new Date().toISOString();
+    const expired = await commitBookingTransition(
+      { ...current, status: "EXPIRED", updatedAt: expiredAt },
+      ["PENDING_PAYMENT"],
+      [
+        kafkaOutboxEvent("booking-events", "BookingExpired", publicBooking({ ...current, status: "EXPIRED", updatedAt: expiredAt })),
+        seatOutboxEvent("releaseSeats", {
+          tripId: current.tripId,
+          seatIds: current.seatIds,
+          holdToken: current.holdToken
+        }, current.code)
+      ]
+    );
+    if (!expired) return;
   }, delay);
 }
 
 for (const booking of bookings.values()) schedulePendingExpiry(booking);
+setInterval(() => void flushOutbox().catch((error) => console.warn(`[booking-service] outbox flush failed: ${error.message}`)), 2_000).unref();
+requestOutboxFlush();
 
 const operationalHealth = createHealthCheck({
   database,
@@ -357,17 +450,19 @@ app.post("/bookings", async (req, res) => {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
-    bookings.set(code, booking);
+    const createdEvents = [kafkaOutboxEvent("booking-events", "BookingCreated", publicBooking(booking))];
+    const created = await createBookingWithOutbox(database, booking, createdEvents);
+    const persistedBooking = created.booking;
+    bookings.set(code, persistedBooking);
     if (booking.userId) {
       rememberPassengers(booking.userId, passengers);
       await saveUser(database, users.get(booking.userId));
     }
-    await saveBooking(database, booking);
-    schedulePendingExpiry(booking);
-    await publishKafka("booking-events", "BookingCreated", publicBooking(booking));
+    schedulePendingExpiry(persistedBooking);
+    await deliverEvents(createdEvents);
     // The raw capability is returned only in this checkout response. It is
     // never persisted or included in events, logs, or subsequent lookups.
-    res.status(201).json({ booking: { ...publicBooking(booking), guestAccessToken } });
+    res.status(201).json({ booking: { ...publicBooking(persistedBooking), guestAccessToken } });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -391,53 +486,86 @@ app.get("/bookings/:code", (req, res) => {
 });
 
 app.post("/bookings/:code/pay", async (req, res) => {
-  const booking = bookings.get(req.params.code);
+  const booking = await currentBooking(req.params.code);
   if (!booking) return res.status(404).json({ error: "Booking not found" });
   if (!canAccessBooking(req, booking)) return res.status(403).json({ error: "Booking access is denied" });
-  if (booking.status !== "PENDING_PAYMENT") return res.status(409).json({ error: `Booking is ${booking.status}` });
+  if (!["PENDING_PAYMENT", "PAYMENT_PROCESSING"].includes(booking.status)) {
+    return res.status(409).json({ error: `Booking is ${booking.status}` });
+  }
+
+  let processing = booking;
+  if (booking.status === "PENDING_PAYMENT") {
+    processing = await commitBookingTransition(
+      { ...booking, status: "PAYMENT_PROCESSING", updatedAt: new Date().toISOString() },
+      ["PENDING_PAYMENT"]
+    );
+    if (!processing) return res.status(409).json({ error: "Booking status changed. Please refresh and try again." });
+  }
 
   if (!req.body.success) {
-    await grpcCall("releaseSeats", {
-      tripId: booking.tripId,
-      seatIds: booking.seatIds,
-      holdToken: booking.holdToken
-    }).catch(() => null);
-    booking.status = "PAYMENT_FAILED";
-    booking.updatedAt = new Date().toISOString();
-    await saveBooking(database, booking);
-    await publishKafka("payment-events", "PaymentFailed", publicBooking(booking));
-    return res.json({ booking: publicBooking(booking) });
+    const failedAt = new Date().toISOString();
+    const failed = await commitBookingTransition(
+      { ...processing, status: "PAYMENT_FAILED", updatedAt: failedAt },
+      ["PAYMENT_PROCESSING"],
+      [
+        kafkaOutboxEvent("payment-events", "PaymentFailed", publicBooking({ ...processing, status: "PAYMENT_FAILED", updatedAt: failedAt })),
+        seatOutboxEvent("releaseSeats", {
+          tripId: processing.tripId,
+          seatIds: processing.seatIds,
+          holdToken: processing.holdToken
+        }, processing.code)
+      ]
+    );
+    if (!failed) return res.status(409).json({ error: "Booking status changed. Please refresh and try again." });
+    return res.json({ booking: publicBooking(failed) });
   }
 
   const confirm = await grpcCall("confirmSeats", {
-    tripId: booking.tripId,
-    seatIds: booking.seatIds,
-    holdToken: booking.holdToken,
-    bookingCode: booking.code
+    tripId: processing.tripId,
+    seatIds: processing.seatIds,
+    holdToken: processing.holdToken,
+    bookingCode: processing.code
   });
-  if (!confirm.ok) return res.status(409).json({ error: confirm.message });
+  if (!confirm.ok) {
+    const reset = await commitBookingTransition(
+      { ...processing, status: "PENDING_PAYMENT", updatedAt: new Date().toISOString() },
+      ["PAYMENT_PROCESSING"]
+    );
+    if (reset) schedulePendingExpiry(reset);
+    return res.status(409).json({ error: confirm.message });
+  }
 
-  booking.status = "TICKET_ISSUED";
-  booking.paidAt = new Date().toISOString();
-  booking.updatedAt = booking.paidAt;
-  booking.tickets = booking.passengers.map((passenger) => ({
-    id: ticketCode(booking, passenger.seatId),
+  const paidAt = new Date().toISOString();
+  const issuedCandidate = {
+    ...processing,
+    status: "TICKET_ISSUED",
+    paidAt,
+    updatedAt: paidAt,
+    tickets: processing.passengers.map((passenger) => ({
+    id: ticketCode(processing, passenger.seatId),
     passengerName: passenger.fullName,
     seatId: passenger.seatId,
-    qrPayload: `${booking.code}-${passenger.seatId}`,
-    issuedAt: booking.paidAt
-  }));
-  await saveBooking(database, booking);
+    qrPayload: `${processing.code}-${passenger.seatId}`,
+    issuedAt: paidAt
+    }))
+  };
 
-  const eventPayload = publicBooking(booking);
-  await publishRabbit("booking.paid", eventPayload, "booking.paid");
-  await publishKafka("payment-events", "PaymentSucceeded", eventPayload);
-  await publishKafka("booking-events", "BookingPaid", eventPayload);
-  res.json({ booking: eventPayload });
+  const eventPayload = publicBooking(issuedCandidate);
+  const issued = await commitBookingTransition(
+    issuedCandidate,
+    ["PAYMENT_PROCESSING"],
+    [
+      rabbitOutboxEvent("booking.paid", "booking.paid", eventPayload),
+      kafkaOutboxEvent("payment-events", "PaymentSucceeded", eventPayload),
+      kafkaOutboxEvent("booking-events", "BookingPaid", eventPayload)
+    ]
+  );
+  if (!issued) return res.status(409).json({ error: "Booking status changed. Please refresh and try again." });
+  res.json({ booking: publicBooking(issued) });
 });
 
 app.post("/bookings/:code/cancel", async (req, res) => {
-  const booking = bookings.get(req.params.code);
+  const booking = await currentBooking(req.params.code);
   if (!booking) return res.status(404).json({ error: "Booking not found" });
   if (!canAccessBooking(req, booking)) return res.status(403).json({ error: "Booking access is denied" });
   if (["CHECKED_IN", "COMPLETED", "CANCELLED", "EXPIRED", "PAYMENT_FAILED"].includes(booking.status)) {
@@ -446,17 +574,21 @@ app.post("/bookings/:code/cancel", async (req, res) => {
   if (Date.parse(booking.departureTime) <= Date.now()) {
     return res.status(409).json({ error: "Cannot cancel a booking after the trip has departed" });
   }
-  await grpcCall("releaseSeats", {
-    tripId: booking.tripId,
-    seatIds: booking.seatIds,
-    holdToken: booking.status === "PENDING_PAYMENT" ? booking.holdToken : booking.code
-  }).catch(() => null);
-  booking.status = "CANCELLED";
-  booking.cancelledAt = new Date().toISOString();
-  booking.updatedAt = booking.cancelledAt;
-  await saveBooking(database, booking);
-  await publishKafka("booking-events", "BookingCancelled", publicBooking(booking));
-  res.json({ booking: publicBooking(booking) });
+  const cancelledAt = new Date().toISOString();
+  const cancelled = await commitBookingTransition(
+    { ...booking, status: "CANCELLED", cancelledAt, updatedAt: cancelledAt },
+    ["PENDING_PAYMENT", "TICKET_ISSUED", "PAID"],
+    [
+      kafkaOutboxEvent("booking-events", "BookingCancelled", publicBooking({ ...booking, status: "CANCELLED", cancelledAt, updatedAt: cancelledAt })),
+      seatOutboxEvent("releaseSeats", {
+        tripId: booking.tripId,
+        seatIds: booking.seatIds,
+        holdToken: booking.status === "PENDING_PAYMENT" ? booking.holdToken : booking.code
+      }, booking.code)
+    ]
+  );
+  if (!cancelled) return res.status(409).json({ error: "Booking status changed. Please refresh and try again." });
+  res.json({ booking: publicBooking(cancelled) });
 });
 
 app.post("/checkin", requireRoles("ADMIN", "STAFF"), async (req, res) => {
@@ -468,12 +600,14 @@ app.post("/checkin", requireRoles("ADMIN", "STAFF"), async (req, res) => {
   if (!["TICKET_ISSUED", "PAID"].includes(booking.status)) {
     return res.status(409).json({ error: `Cannot check in booking in ${booking.status}` });
   }
-  booking.status = "CHECKED_IN";
-  booking.checkedInAt = new Date().toISOString();
-  booking.updatedAt = booking.checkedInAt;
-  await saveBooking(database, booking);
-  await publishKafka("booking-events", "PassengerCheckedIn", publicBooking(booking));
-  res.json({ booking: publicBooking(booking) });
+  const checkedInAt = new Date().toISOString();
+  const checkedIn = await commitBookingTransition(
+    { ...booking, status: "CHECKED_IN", checkedInAt, updatedAt: checkedInAt },
+    ["TICKET_ISSUED", "PAID"],
+    [kafkaOutboxEvent("booking-events", "PassengerCheckedIn", publicBooking({ ...booking, status: "CHECKED_IN", checkedInAt, updatedAt: checkedInAt }))]
+  );
+  if (!checkedIn) return res.status(409).json({ error: "Booking status changed. Please refresh and try again." });
+  res.json({ booking: publicBooking(checkedIn) });
 });
 
 app.post("/admin/block-seats", requireRoles("ADMIN", "STAFF"), async (req, res) => {
