@@ -143,6 +143,7 @@ services:
       TRIP_SERVICE_URL: http://trip-service:4010
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       KAFKA_BROKERS: kafka:9092
+      PENDING_PAYMENT_TTL_SECONDS: 300
     ports:
       - "4020:4020"
     depends_on:
@@ -163,6 +164,9 @@ services:
   ai-service:
     <<: *app-build
     command: npm run dev -w services/ai-service
+    env_file:
+      - path: .env.local
+        required: false
     environment:
       TRIP_SERVICE_URL: http://trip-service:4010
       BOOKING_SERVICE_URL: http://booking-service:4020
@@ -197,6 +201,7 @@ services:
     command: npm run dev -w workers/ticket-worker
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      DATA_DIR: /app/data
     volumes:
       - ./data:/app/data
     depends_on:
@@ -208,6 +213,7 @@ services:
     command: npm run dev -w workers/email-worker
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      DATA_DIR: /app/data
     volumes:
       - ./data:/app/data
     depends_on:

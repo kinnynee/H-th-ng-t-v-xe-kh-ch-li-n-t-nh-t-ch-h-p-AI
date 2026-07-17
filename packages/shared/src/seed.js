@@ -59,6 +59,56 @@ export const routes = [
     pickup: "Bến xe Trung tâm Đà Nẵng",
     dropoff: "Bến xe Mỹ Đình",
     cancellationPolicy: "Hủy trước 24 tiếng hoàn 85%."
+  },
+  {
+    id: "route-dalat-hcm",
+    from: "Đà Lạt",
+    to: "TP.HCM",
+    distanceKm: 310,
+    durationMinutes: 420,
+    pickup: "Bến xe Liên tỉnh Đà Lạt",
+    dropoff: "Bến xe Miền Đông",
+    cancellationPolicy: "Hủy miễn phí trước giờ khởi hành 12 tiếng. Sau thời điểm này phí hủy là 30%."
+  },
+  {
+    id: "route-nhatrang-hcm",
+    from: "Nha Trang",
+    to: "TP.HCM",
+    distanceKm: 430,
+    durationMinutes: 540,
+    pickup: "Bến xe Nha Trang phía Nam",
+    dropoff: "Bến xe Miền Đông",
+    cancellationPolicy: "Hủy trước 24 tiếng hoàn 90%, trước 6 tiếng hoàn 60%."
+  },
+  {
+    id: "route-cantho-hcm",
+    from: "Cần Thơ",
+    to: "TP.HCM",
+    distanceKm: 170,
+    durationMinutes: 220,
+    pickup: "Bến xe Trung tâm Cần Thơ",
+    dropoff: "Bến xe Miền Tây",
+    cancellationPolicy: "Hủy trước 4 tiếng hoàn 80%."
+  },
+  {
+    id: "route-hanoi-danang",
+    from: "Hà Nội",
+    to: "Đà Nẵng",
+    distanceKm: 770,
+    durationMinutes: 900,
+    pickup: "Bến xe Mỹ Đình",
+    dropoff: "Bến xe Trung tâm Đà Nẵng",
+    cancellationPolicy: "Hủy trước 24 tiếng hoàn 85%."
+  },
+  {
+    id: "route-hcm-danang",
+    from: "TP.HCM",
+    to: "Đà Nẵng",
+    distanceKm: 960,
+    durationMinutes: 1080,
+    pickup: "Bến xe Miền Đông",
+    dropoff: "Bến xe Trung tâm Đà Nẵng",
+    cancellationPolicy: "Hủy trước 24 tiếng hoàn 85%, trước 12 tiếng hoàn 60%."
   }
 ];
 
@@ -82,14 +132,45 @@ export function buildTrips() {
   const d2 = isoDate(2);
   const d3 = isoDate(3);
   const templates = [
+    ["trip-hcm-dalat-dawn", "route-hcm-dalat", "kumhodemo", "BUS-29-01", d0, "05:30", 280000],
     ["trip-hcm-dalat-early", "route-hcm-dalat", "futademo", "SLEEP-34-02", d0, "07:00", 320000],
+    ["trip-hcm-dalat-morning", "route-hcm-dalat", "thanhbuoidemo", "LIMO-22-03", d0, "09:30", 390000],
+    ["trip-hcm-dalat-afternoon", "route-hcm-dalat", "futademo", "BUS-29-01", d0, "14:00", 300000],
+    ["trip-hcm-dalat-evening", "route-hcm-dalat", "kumhodemo", "SLEEP-34-02", d0, "18:00", 340000],
     ["trip-hcm-dalat-night", "route-hcm-dalat", "thanhbuoidemo", "LIMO-22-03", d0, "21:30", 420000],
     ["trip-hcm-dalat-next", "route-hcm-dalat", "kumhodemo", "SLEEP-34-02", d1, "19:00", 350000],
+    ["trip-hcm-dalat-next-morning", "route-hcm-dalat", "futademo", "LIMO-22-03", d1, "08:00", 410000],
+    ["trip-hcm-dalat-day2", "route-hcm-dalat", "thanhbuoidemo", "SLEEP-34-02", d2, "20:30", 360000],
+
+    ["trip-hcm-nhatrang-today", "route-hcm-nhatrang", "futademo", "SLEEP-34-02", d0, "07:30", 380000],
+    ["trip-hcm-nhatrang-today-night", "route-hcm-nhatrang", "thanhbuoidemo", "LIMO-22-03", d0, "20:00", 460000],
     ["trip-hcm-nhatrang-morning", "route-hcm-nhatrang", "kumhodemo", "SLEEP-34-02", d1, "08:30", 390000],
+    ["trip-hcm-nhatrang-next-night", "route-hcm-nhatrang", "thanhbuoidemo", "LIMO-22-03", d1, "21:00", 450000],
     ["trip-hcm-nhatrang-night", "route-hcm-nhatrang", "futademo", "SLEEP-34-02", d2, "22:00", 410000],
+
+    ["trip-hcm-cantho-morning", "route-hcm-cantho", "kumhodemo", "BUS-29-01", d0, "06:00", 140000],
+    ["trip-hcm-cantho-late-morning", "route-hcm-cantho", "thanhbuoidemo", "LIMO-22-03", d0, "09:45", 210000],
     ["trip-hcm-cantho-noon", "route-hcm-cantho", "futademo", "BUS-29-01", d0, "12:15", 160000],
+    ["trip-hcm-cantho-late", "route-hcm-cantho", "kumhodemo", "SLEEP-34-02", d0, "17:30", 190000],
     ["trip-hcm-cantho-evening", "route-hcm-cantho", "kumhodemo", "LIMO-22-03", d1, "18:30", 220000],
-    ["trip-danang-hanoi", "route-danang-hanoi", "thanhbuoidemo", "SLEEP-34-02", d3, "17:00", 520000]
+    ["trip-hcm-cantho-next-morning", "route-hcm-cantho", "futademo", "BUS-29-01", d1, "07:15", 150000],
+
+    ["trip-dalat-hcm-morning", "route-dalat-hcm", "futademo", "SLEEP-34-02", d0, "08:00", 330000],
+    ["trip-dalat-hcm-night", "route-dalat-hcm", "thanhbuoidemo", "LIMO-22-03", d0, "22:00", 420000],
+    ["trip-dalat-hcm-next", "route-dalat-hcm", "kumhodemo", "BUS-29-01", d1, "13:30", 290000],
+
+    ["trip-nhatrang-hcm-morning", "route-nhatrang-hcm", "kumhodemo", "SLEEP-34-02", d0, "09:00", 390000],
+    ["trip-nhatrang-hcm-night", "route-nhatrang-hcm", "futademo", "LIMO-22-03", d0, "21:00", 460000],
+    ["trip-nhatrang-hcm-next", "route-nhatrang-hcm", "thanhbuoidemo", "SLEEP-34-02", d1, "10:30", 400000],
+
+    ["trip-cantho-hcm-morning", "route-cantho-hcm", "futademo", "BUS-29-01", d0, "07:00", 150000],
+    ["trip-cantho-hcm-afternoon", "route-cantho-hcm", "kumhodemo", "LIMO-22-03", d0, "15:00", 220000],
+    ["trip-cantho-hcm-next", "route-cantho-hcm", "thanhbuoidemo", "BUS-29-01", d1, "11:00", 160000],
+
+    ["trip-danang-hanoi-today", "route-danang-hanoi", "thanhbuoidemo", "SLEEP-34-02", d0, "17:00", 520000],
+    ["trip-danang-hanoi", "route-danang-hanoi", "futademo", "LIMO-22-03", d3, "17:00", 590000],
+    ["trip-hanoi-danang-next", "route-hanoi-danang", "kumhodemo", "SLEEP-34-02", d1, "16:30", 540000],
+    ["trip-hcm-danang-next", "route-hcm-danang", "futademo", "SLEEP-34-02", d1, "18:00", 650000]
   ];
 
   return templates.map(([id, routeId, operatorId, vehicleId, date, departAt, price]) => {

@@ -204,6 +204,7 @@ const typeDefs = /* GraphQL */ `
     operator: String
     busType: String
     sort: SortMode
+    includeInactive: Boolean
   }
 
   input PassengerInput {
@@ -390,7 +391,7 @@ const typeDefs = /* GraphQL */ `
     routes: [Route!]!
     searchTrips(input: SearchTripsInput!): SearchTripsPayload!
     trip(id: ID!): Trip
-    booking(code: ID!): Booking
+    booking(code: ID!, email: String): Booking
     bookingsByTrip(tripId: ID!): [Booking!]!
     myBookings(userId: ID!): [Booking!]!
     savedPassengers(userId: ID!): [SavedPassenger!]!
@@ -423,7 +424,7 @@ const typeDefs = /* GraphQL */ `
     deleteTrip(id: ID!): Boolean!
     updateTripStatus(id: ID!, status: String!): Trip!
     blockSeats(tripId: ID!, seatIds: [String!]!, blocked: Boolean!): HoldResult!
-    askAssistant(message: String!, bookingCode: String): ChatResponse!
+    askAssistant(message: String!, bookingCode: String, email: String): ChatResponse!
   }
 
   type Subscription {
@@ -457,7 +458,7 @@ const resolvers = {
       return { ...payload, trips };
     },
     trip: async (_parent, { id }) => (await requestJSON(`${tripUrl}/trips/${id}`)).trip,
-    booking: async (_parent, { code }, context) => (await requestJSON(`${bookingUrl}/bookings/${code}`, {
+    booking: async (_parent, { code, email }, context) => (await requestJSON(`${bookingUrl}/bookings/${code}?${qs({ email })}`, {
       headers: bookingAccessHeaders(context)
     })).booking,
     bookingsByTrip: async (_parent, { tripId }, context) => {

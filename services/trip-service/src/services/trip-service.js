@@ -207,7 +207,7 @@ export function createTripService({ stores, locations, operators, cache, reposit
     async updateTripStatus(id, status) {
       const trip = stores.trips.get(id);
       if (!trip) throw httpError(404, "Trip not found");
-      if (!["ACTIVE", "DEPARTED", "COMPLETED"].includes(status)) throw httpError(400, "Invalid trip status");
+      if (!["ACTIVE", "SUSPENDED", "DEPARTED", "COMPLETED"].includes(status)) throw httpError(400, "Invalid trip status");
       trip.status = status;
       stores.trips.set(id, trip);
       await repository.saveTrip(trip);

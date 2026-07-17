@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { BarChart3, BusFront, CheckCircle2, Lock, LogIn, Plus, Route, Save, Search, Trash2 } from "lucide-react";
+import { BarChart3, BusFront, CheckCircle2, Lock, LogIn, LogOut, MapPin, Plus, Save, Search, Trash2 } from "lucide-react";
 import SiteChrome from "../../components/SiteChrome";
 import { gql, money, shortDateTime, todayISO } from "../../lib/graphql";
 
 const ADMIN = `
 query Admin($input: SearchTripsInput!) {
   catalog { operators { id name hotline } vehicles { id plate type seatCount layout } }
+  stops { id city name }
   routes { id from to distanceKm durationMinutes pickup dropoff cancellationPolicy }
   searchTrips(input: $input) {
     trips { id routeId from to operatorName busType departureTime price status availableSeats }
@@ -18,11 +19,30 @@ query Admin($input: SearchTripsInput!) {
     revenueByDay { date revenue tickets }
     popularRoutes { route searches tickets }
   }
+  eventLogs(limit: 30) { eventId eventType topic occurredAt payload }
 }`;
 
 const LOGIN = `
 mutation Login($email: String!, $password: String!) {
-  adminLogin(email: $email, password: $password) { id email role name }
+  adminLogin(email: $email, password: $password) {
+    user { id email role name }
+    accessToken
+  }
+}`;
+
+const CREATE_STOP = `
+mutation CreateStop($input: StopInput!) {
+  createStop(input: $input) { id city name }
+}`;
+
+const UPDATE_STOP = `
+mutation UpdateStop($id: ID!, $input: StopInput!) {
+  updateStop(id: $id, input: $input) { id city name }
+}`;
+
+const DELETE_STOP = `
+mutation DeleteStop($id: ID!) {
+  deleteStop(id: $id)
 }`;
 
 const CREATE_ROUTE = `
@@ -123,23 +143,24 @@ export default function AdminPage() {
     seatCount: 22,
     layout: "premium"
   });
+  const [stopForm, setStopForm] = useState({ id: "", city: "TP.HCM", name: "Bến xe Miền Đông mới" });
   const [ops, setOps] = useState({ tripId: "", seatIds: "A01", codeOrTicket: "" });
   const [tripBookings, setTripBookings] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState("");
 
   async function load() {
     setIsLoading(true);
     try {
-      const result = await gql(ADMIN, { input: {} });
-    setData(result);
-    setTripForm((current) => ({
-      ...current,
-      routeId: current.routeId || result.routes[0]?.id || "",
-      operatorId: current.operatorId || result.catalog.operators[0]?.id || "",
-      vehicleId: current.vehicleId || result.catalog.vehicles[0]?.id || "",
-    }));
-    setOps((current) => ({ ...current, tripId: current.tripId || result.searchTrips.trips[0]?.id || "" }));
+      const result = await gql(ADMIN, { input: { includeInactive: true } });
+      setData(result);
+      setTripForm((current) => ({
+        ...current,
+        routeId: current.routeId || result.routes[0]?.id || "",
+        operatorId: current.operatorId || result.catalog.operators[0]?.id || "",
+        vehicleId: current.vehicleId || result.catalog.vehicles[0]?.id || "",
+      }));
+      setOps((current) => ({ ...current, tripId: current.tripId || result.searchTrips.trips[0]?.id || "" }));
     } catch (err) {
       setMessage(`Lỗi: ${err.message}`);
     } finally {
@@ -148,19 +169,76 @@ export default function AdminPage() {
   }
 
   useEffect(() => {
-    load().catch((err) => setMessage(err.message));
+    const raw = localStorage.getItem("busAdminUser");
+    const token = localStorage.getItem("busAccessToken");
+    if (!raw || !token) return;
+    try {
+      const stored = JSON.parse(raw);
+      if (!["ADMIN", "STAFF"].includes(stored.role)) return;
+      setUser(stored);
+      load().catch((err) => setMessage(`Lỗi: ${err.message}`));
+    } catch {
+      localStorage.removeItem("busAdminUser");
+    }
   }, []);
 
   async function doLogin() {
     setIsLoading(true);
     try {
       const result = await gql(LOGIN, login);
-      setUser(result.adminLogin);
-      setMessage(`Đăng nhập ${result.adminLogin.role}`);
+      localStorage.removeItem("busUser");
+      localStorage.setItem("busAccessToken", result.adminLogin.accessToken);
+      localStorage.setItem("busAdminUser", JSON.stringify(result.adminLogin.user));
+      setUser(result.adminLogin.user);
+      setMessage(`Đăng nhập ${result.adminLogin.user.role}`);
+      await load();
     } catch (err) {
       setMessage(`Lỗi: ${err.message}`);
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  function logout() {
+    localStorage.removeItem("busAccessToken");
+    localStorage.removeItem("busAdminUser");
+    setUser(null);
+    setData(null);
+    setTripBookings([]);
+    setMessage("Đã đăng xuất.");
+  }
+
+  async function saveStop() {
+    if (!stopForm.city.trim() || !stopForm.name.trim()) {
+      return setMessage("Lỗi: Vui lòng nhập tỉnh/thành và tên điểm dừng.");
+    }
+    setIsLoading(true);
+    try {
+      const input = { city: stopForm.city.trim(), name: stopForm.name.trim() };
+      const result = stopForm.id
+        ? await gql(UPDATE_STOP, { id: stopForm.id, input })
+        : await gql(CREATE_STOP, { input });
+      const stop = stopForm.id ? result.updateStop : result.createStop;
+      setStopForm({ id: "", city: stop.city, name: "" });
+      setMessage(`Đã lưu điểm dừng ${stop.name}`);
+      await load();
+    } catch (err) {
+      setMessage(`Lỗi: ${err.message}`);
+      setIsLoading(false);
+    }
+  }
+
+  function editStop(stop) {
+    setStopForm({ id: stop.id, city: stop.city, name: stop.name });
+  }
+
+  async function deleteStop(id) {
+    try {
+      await gql(DELETE_STOP, { id });
+      setMessage("Đã xóa điểm dừng.");
+      await load();
+    } catch (err) {
+      setMessage(`Lỗi: ${err.message}`);
     }
   }
 
@@ -329,9 +407,16 @@ export default function AdminPage() {
             <h1>Vận hành hệ thống</h1>
             <p>{user ? `${user.name} - ${user.role}` : "Đăng nhập admin hoặc staff."}</p>
           </div>
-          <span className="badge">
-            <BarChart3 size={14} /> Analytics
-          </span>
+          <div className="meta-row">
+            <span className="badge">
+              <BarChart3 size={14} /> Analytics
+            </span>
+            {user && (
+              <button className="ghost-button" onClick={logout}>
+                <LogOut size={16} /> Đăng xuất
+              </button>
+            )}
+          </div>
         </section>
 
         {!user && (
@@ -378,7 +463,39 @@ export default function AdminPage() {
 
         {user && data && (
           <section className="split">
-            <div className="stack">
+            <div className="stack" style={{ display: user.role === "ADMIN" ? undefined : "none" }}>
+              <div className="panel">
+                <div className="panel-header">
+                  <h2>CRUD điểm dừng</h2>
+                </div>
+                <div className="panel-body form-grid">
+                  <div className="two-cols">
+                    <input className="input" value={stopForm.city} onChange={(event) => setStopForm((current) => ({ ...current, city: event.target.value }))} placeholder="Tỉnh/thành" />
+                    <input className="input" value={stopForm.name} onChange={(event) => setStopForm((current) => ({ ...current, name: event.target.value }))} placeholder="Tên bến/điểm dừng" />
+                  </div>
+                  <button className="primary-button" onClick={saveStop} disabled={isLoading}>
+                    <MapPin size={18} /> {stopForm.id ? "Cập nhật điểm dừng" : "Tạo điểm dừng"}
+                  </button>
+                  <div style={{ overflowX: "auto" }}>
+                    <table className="table">
+                      <thead><tr><th>Tỉnh/thành</th><th>Điểm dừng</th><th></th></tr></thead>
+                      <tbody>
+                        {data.stops.map((stop) => (
+                          <tr key={stop.id}>
+                            <td>{stop.city}</td>
+                            <td>{stop.name}</td>
+                            <td>
+                              <button className="ghost-button" onClick={() => editStop(stop)}>Sửa</button>
+                              <button className="ghost-button" onClick={() => deleteStop(stop.id)}><Trash2 size={16} /> Xóa</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
               <div className="panel">
                 <div className="panel-header">
                   <h2>CRUD tuyến</h2>
@@ -571,6 +688,31 @@ export default function AdminPage() {
                   </div>
                 </div>
               </div>
+
+              <div className="panel">
+                <div className="panel-header">
+                  <h2>Nhật ký sự kiện</h2>
+                </div>
+                <div className="panel-body">
+                  {data.eventLogs.length === 0 && <div className="empty">Chưa có sự kiện Kafka.</div>}
+                  {data.eventLogs.length > 0 && (
+                    <div style={{ overflowX: "auto" }}>
+                      <table className="table">
+                        <thead><tr><th>Thời gian</th><th>Topic</th><th>Sự kiện</th></tr></thead>
+                        <tbody>
+                          {data.eventLogs.map((event) => (
+                            <tr key={event.eventId}>
+                              <td>{shortDateTime(event.occurredAt)}</td>
+                              <td>{event.topic}</td>
+                              <td>{event.eventType}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </section>
         )}
@@ -596,13 +738,20 @@ export default function AdminPage() {
                       <td>{trip.availableSeats}</td>
                       <td>{trip.status}</td>
                       <td>
-                        <button className="ghost-button" onClick={() => updateStatus(trip.id, trip.status === "ACTIVE" ? "DEPARTED" : "ACTIVE")}>
-                          <Route size={16} /> Đổi
-                        </button>
-                        <button className="ghost-button" onClick={() => editTrip(trip)}>Sửa</button>
-                        <button className="ghost-button" onClick={() => deleteTrip(trip.id)}>
-                          <Trash2 size={16} /> Xóa
-                        </button>
+                        <select className="select" value={trip.status} onChange={(event) => updateStatus(trip.id, event.target.value)} aria-label={`Trạng thái chuyến ${trip.id}`}>
+                          <option value="ACTIVE">ACTIVE</option>
+                          <option value="SUSPENDED">SUSPENDED</option>
+                          <option value="DEPARTED">DEPARTED</option>
+                          <option value="COMPLETED">COMPLETED</option>
+                        </select>
+                        {user?.role === "ADMIN" && (
+                          <>
+                            <button className="ghost-button" onClick={() => editTrip(trip)}>Sửa</button>
+                            <button className="ghost-button" onClick={() => deleteTrip(trip.id)}>
+                              <Trash2 size={16} /> Xóa
+                            </button>
+                          </>
+                        )}
                       </td>
                     </tr>
                   ))}

@@ -36,5 +36,9 @@ export async function getBookingStatus({ bookingCode, email }) {
   if (!bookingCode || !email) {
     return { error: "Cần cả mã booking và email để tra cứu thông tin riêng tư." };
   }
-  return requestJSON(`${config.bookingServiceUrl}/bookings/${bookingCode}?email=${encodeURIComponent(email)}`);
+  try {
+    return await requestJSON(`${config.bookingServiceUrl}/bookings/${bookingCode}?email=${encodeURIComponent(email)}`);
+  } catch (error) {
+    return { error: error.message };
+  }
 }

@@ -1,13 +1,14 @@
 import express from "express";
 import cors from "cors";
 import { subscribeKafka } from "@bus-ai/shared/broker";
-import { loadState, recordSearch, recordBookingAttempt, recordPaymentSuccess, getSummary } from "./store.js";
+import { loadState, recordEvent, recordSearch, recordBookingAttempt, recordPaymentSuccess, getEvents, getSummary } from "./store.js";
 
 const app = express();
 app.use(cors());
 
 app.get("/health", (req, res) => res.json({ ok: true, service: "analytics-worker" }));
 app.get("/summary", (req, res) => res.json(getSummary()));
+app.get("/events", (req, res) => res.json({ events: getEvents(req.query.limit) }));
 
 async function main() {
   console.log(`[analytics-worker] Starting analytics worker...`);
@@ -17,12 +18,13 @@ async function main() {
 
   try {
     // Note: Kafka consumer needs group id and list of topics
-    await subscribeKafka("analytics-worker-group", TOPICS, async (message, topic) => {
+    const subscribed = await subscribeKafka("analytics-worker-group", TOPICS, async (message, topic) => {
       console.log(`[analytics-worker] Received event on ${topic}:`, message);
       
       const { eventType, payload } = message;
       
       try {
+        await recordEvent(message, topic);
         if (topic === "search-events" && eventType === "TripSearchPerformed") {
           const route = payload.from && payload.to ? `${payload.from} - ${payload.to}` : null;
           await recordSearch(route);
@@ -35,7 +37,9 @@ async function main() {
         console.error(`[analytics-worker] Error processing event:`, err);
       }
     });
-    console.log(`[analytics-worker] Subscribed to topics: ${TOPICS.join(", ")}`);
+    console.log(subscribed
+      ? `[analytics-worker] Subscribed to topics: ${TOPICS.join(", ")}`
+      : "[analytics-worker] Running without a Kafka subscription.");
   } catch (err) {
     console.error(`[analytics-worker] Failed to connect broker:`, err);
     // fallback logic or simply keep alive

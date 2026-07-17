@@ -33,7 +33,8 @@ function loadEnvFile(filePath) {
   }
 }
 
-// Load .env từ thư mục gốc dự án
+// Local secrets take precedence; both files are excluded from Git/Docker build context.
+loadEnvFile(resolve(__dirname, "../../../../.env.local"));
 loadEnvFile(resolve(__dirname, "../../../../.env"));
 
 /** Cấu hình tập trung cho ai-service */

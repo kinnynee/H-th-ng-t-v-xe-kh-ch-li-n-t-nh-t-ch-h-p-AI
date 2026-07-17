@@ -5,15 +5,15 @@ import { Bot, Send, X } from "lucide-react";
 import { gql } from "../lib/graphql";
 
 const ASK = `
-mutation Ask($message: String!, $bookingCode: String) {
-  askAssistant(message: $message, bookingCode: $bookingCode) {
+mutation Ask($message: String!, $bookingCode: String, $email: String) {
+  askAssistant(message: $message, bookingCode: $bookingCode, email: $email) {
     answer
     sources
     toolCalls
   }
 }`;
 
-export default function ChatWidget({ bookingCode = "" }) {
+export default function ChatWidget({ bookingCode = "", email = "" }) {
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -31,7 +31,7 @@ export default function ChatWidget({ bookingCode = "" }) {
     setLog((items) => [...items, { role: "user", text }]);
     setBusy(true);
     try {
-      const data = await gql(ASK, { message: text, bookingCode }, { bookingCode });
+      const data = await gql(ASK, { message: text, bookingCode, email }, { bookingCode });
       const suffix = data.askAssistant.sources.length ? `\nNguồn: ${data.askAssistant.sources.join(", ")}` : "";
       setLog((items) => [...items, { role: "bot", text: `${data.askAssistant.answer}${suffix}` }]);
     } catch (error) {

@@ -51,40 +51,48 @@ export async function publishRabbit(eventType, payload, routingKey = eventType) 
 }
 
 export async function subscribeRabbit(queueName, bindingKeys, handler, queueOptions = {}) {
-  try {
-    const channel = await getRabbitChannel();
-    if (!channel) {
-      console.log(`[rabbit:fallback] subscriber ${queueName} waiting for real RabbitMQ`);
-      return null;
-    }
-    const queue = await channel.assertQueue(queueName, {
-      durable: queueOptions.durable ?? true,
-      exclusive: queueOptions.exclusive ?? false,
-      autoDelete: queueOptions.autoDelete ?? false
-    });
-    for (const key of bindingKeys) {
-      await channel.bindQueue(queue.queue, "bus.events", key);
-    }
-    const consumer = await channel.consume(queue.queue, async (message) => {
-      if (!message) return;
-      try {
-        const event = JSON.parse(message.content.toString("utf8"));
-        await handler(event);
-        channel.ack(message);
-      } catch (error) {
-        console.error(`[rabbit] handler failed for ${queueName}:`, error);
-        channel.nack(message, false, false);
+  const attempts = process.env.RABBITMQ_URL ? 15 : 1;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const channel = await getRabbitChannel();
+      if (!channel) {
+        console.log(`[rabbit:fallback] subscriber ${queueName} waiting for real RabbitMQ`);
+        return null;
       }
-    });
-    console.log(`[rabbit] ${queue.queue} subscribed to ${bindingKeys.join(", ")}`);
-    return {
-      queueName: queue.queue,
-      cancel: () => channel.cancel(consumer.consumerTag)
-    };
-  } catch (error) {
-    console.warn(`[rabbit:fallback] subscriber ${queueName}: ${error.message}`);
-    return null;
+      const queue = await channel.assertQueue(queueName, {
+        durable: queueOptions.durable ?? true,
+        exclusive: queueOptions.exclusive ?? false,
+        autoDelete: queueOptions.autoDelete ?? false
+      });
+      for (const key of bindingKeys) {
+        await channel.bindQueue(queue.queue, "bus.events", key);
+      }
+      const consumer = await channel.consume(queue.queue, async (message) => {
+        if (!message) return;
+        try {
+          const event = JSON.parse(message.content.toString("utf8"));
+          await handler(event);
+          channel.ack(message);
+        } catch (error) {
+          console.error(`[rabbit] handler failed for ${queueName}:`, error);
+          channel.nack(message, false, false);
+        }
+      });
+      console.log(`[rabbit] ${queue.queue} subscribed to ${bindingKeys.join(", ")}`);
+      return {
+        queueName: queue.queue,
+        cancel: () => channel.cancel(consumer.consumerTag)
+      };
+    } catch (error) {
+      if (attempt === attempts) {
+        console.warn(`[rabbit:fallback] subscriber ${queueName}: ${error.message}`);
+        return null;
+      }
+      console.warn(`[rabbit] subscriber ${queueName} waiting for broker (${attempt}/${attempts})`);
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    }
   }
+  return null;
 }
 
 /**
@@ -177,7 +185,7 @@ export async function publishKafka(topic, eventType, payload) {
 export async function subscribeKafka(groupId, topics, handler) {
   if (!process.env.KAFKA_BROKERS) {
     console.log(`[kafka:fallback] subscriber ${groupId} waiting for real Kafka`);
-    return;
+    return false;
   }
   try {
     const { Kafka } = await import("kafkajs");
@@ -185,6 +193,16 @@ export async function subscribeKafka(groupId, topics, handler) {
       clientId: `${groupId}-client`,
       brokers: process.env.KAFKA_BROKERS.split(",")
     });
+    const admin = kafka.admin();
+    await admin.connect();
+    try {
+      await admin.createTopics({
+        topics: topics.map((topic) => ({ topic, numPartitions: 1, replicationFactor: 1 })),
+        waitForLeaders: true
+      });
+    } finally {
+      await admin.disconnect();
+    }
     const consumer = kafka.consumer({ groupId });
     await consumer.connect();
     for (const topic of topics) {
@@ -197,7 +215,9 @@ export async function subscribeKafka(groupId, topics, handler) {
       }
     });
     console.log(`[kafka] ${groupId} subscribed to ${topics.join(", ")}`);
+    return true;
   } catch (error) {
     console.warn(`[kafka:fallback] subscriber ${groupId}: ${error.message}`);
+    return false;
   }
 }

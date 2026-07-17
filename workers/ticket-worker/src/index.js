@@ -2,6 +2,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { subscribeRabbit } from "@bus-ai/shared/broker";
 
+const dataDir = path.resolve(process.env.DATA_DIR || "../../data");
+
 function ticketHtml(booking) {
   const tickets = booking.tickets
     .map(
@@ -88,7 +90,7 @@ function simpleTicketPdf(booking) {
 
 await subscribeRabbit("ticket-worker.booking-paid", ["booking.paid"], async (event) => {
   const booking = event.payload;
-  const outDir = path.resolve("data/generated-tickets");
+  const outDir = path.join(dataDir, "generated-tickets");
   await mkdir(outDir, { recursive: true });
   await writeFile(path.join(outDir, `${booking.code}.html`), ticketHtml(booking), "utf8");
   await writeFile(path.join(outDir, `${booking.code}.pdf`), simpleTicketPdf(booking), "utf8");

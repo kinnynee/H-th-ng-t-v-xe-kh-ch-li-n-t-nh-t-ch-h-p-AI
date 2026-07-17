@@ -42,3 +42,17 @@ test("trip application service owns validation, persistence and search caching",
   assert.ok(first.trips.length > 0);
   assert.equal(writes.some((item) => item.name === "saveStop"), true);
 });
+
+test("suspended trips are hidden from customers but visible to admin searches", async () => {
+  const { service } = serviceFixture();
+  const initial = await service.search({ from: "TP.HCM", to: "Đà Lạt" });
+  const trip = initial.trips[0];
+  assert.ok(trip);
+
+  await service.updateTripStatus(trip.id, "SUSPENDED");
+
+  const customerSearch = await service.search({ from: "TP.HCM", to: "Đà Lạt" });
+  const adminSearch = await service.search({ from: "TP.HCM", to: "Đà Lạt", includeInactive: "true" });
+  assert.equal(customerSearch.trips.some((item) => item.id === trip.id), false);
+  assert.equal(adminSearch.trips.some((item) => item.id === trip.id && item.status === "SUSPENDED"), true);
+});

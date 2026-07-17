@@ -11,13 +11,15 @@ let state = {
   popularRoutes: {}, // e.g. "Sài Gòn - Đà Lạt": { searches: 10, tickets: 5 }
   searches: 0,
   bookings: 0,
-  eventCount: 0
+  eventCount: 0,
+  events: []
 };
 
 export async function loadState() {
   try {
     const data = await fs.readFile(DB_PATH, "utf8");
-    state = JSON.parse(data);
+    state = { ...state, ...JSON.parse(data) };
+    if (!Array.isArray(state.events)) state.events = [];
     console.log("[analytics-store] Loaded state from disk.");
   } catch (err) {
     console.log("[analytics-store] No existing state found, starting fresh.");
@@ -34,7 +36,6 @@ async function saveState() {
 
 export async function recordSearch(route) {
   state.searches++;
-  state.eventCount++;
   
   if (route) {
     if (!state.popularRoutes[route]) {
@@ -46,13 +47,11 @@ export async function recordSearch(route) {
 }
 
 export async function recordBookingAttempt() {
-  state.eventCount++;
   await saveState();
 }
 
 export async function recordPaymentSuccess(booking) {
   state.bookings++;
-  state.eventCount++;
   
   const today = isoDate(0);
   if (!state.revenueByDay[today]) {
@@ -71,6 +70,24 @@ export async function recordPaymentSuccess(booking) {
   }
   
   await saveState();
+}
+
+export async function recordEvent(event, topic) {
+  state.eventCount++;
+  state.events.unshift({
+    eventId: event.eventId,
+    eventType: event.eventType,
+    topic,
+    occurredAt: event.occurredAt,
+    payload: event.payload ?? {}
+  });
+  state.events = state.events.slice(0, 200);
+  await saveState();
+}
+
+export function getEvents(limit = 30) {
+  const safeLimit = Math.min(100, Math.max(1, Number(limit) || 30));
+  return state.events.slice(0, safeLimit);
 }
 
 export function getSummary() {

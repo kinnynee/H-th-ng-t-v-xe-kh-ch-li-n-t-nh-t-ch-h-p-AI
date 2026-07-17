@@ -95,6 +95,7 @@ export default function AccountPage() {
         setMessage("Trang này dành cho tài khoản CUSTOMER.");
         return;
       }
+      localStorage.removeItem("busAdminUser");
       localStorage.setItem("busUser", JSON.stringify(nextUser));
       localStorage.setItem("busAccessToken", auth.accessToken);
       setUser(nextUser);

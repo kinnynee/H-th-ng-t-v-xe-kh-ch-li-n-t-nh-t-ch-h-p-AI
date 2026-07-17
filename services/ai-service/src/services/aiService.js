@@ -43,6 +43,8 @@ async function answerTripSearch(message) {
  */
 async function fallbackAssistant({ message, bookingCode, email }) {
   const text = fold(message);
+  const resolvedBookingCode = bookingCode || message.match(/\bBK[A-Z0-9-]{6,}\b/i)?.[0]?.toUpperCase() || "";
+  const resolvedEmail = email || message.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || "";
   const sources = [];
   const toolCalls = [];
 
@@ -67,8 +69,8 @@ async function fallbackAssistant({ message, bookingCode, email }) {
   }
 
   // Tra cứu booking
-  if (text.includes("booking") || bookingCode) {
-    if (!email || !bookingCode) {
+  if (text.includes("booking") || resolvedBookingCode) {
+    if (!resolvedEmail || !resolvedBookingCode) {
       return {
         answer: "Để tra cứu thông tin, vui lòng cung cấp cả mã booking và email đặt vé của bạn.",
         sources,
@@ -76,7 +78,7 @@ async function fallbackAssistant({ message, bookingCode, email }) {
       };
     }
     toolCalls.push("getBookingStatus");
-    const status = await getBookingStatus({ bookingCode, email });
+    const status = await getBookingStatus({ bookingCode: resolvedBookingCode, email: resolvedEmail });
     if (status.error) return { answer: status.error, sources, toolCalls };
     const booking = status.booking;
     return {

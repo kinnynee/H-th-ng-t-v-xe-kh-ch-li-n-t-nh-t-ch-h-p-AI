@@ -8,8 +8,8 @@ import SiteChrome from "../../../components/SiteChrome";
 import { gql, money, openBookingTicket, shortDateTime, storeBookingAccessToken } from "../../../lib/graphql";
 
 const BOOKING = `
-query Booking($code: ID!) {
-  booking(code: $code) {
+query Booking($code: ID!, $email: String) {
+  booking(code: $code, email: $email) {
     code status routeName departureTime pickup dropoff vehiclePlate customerEmail totalAmount ticketHtmlUrl ticketPdfUrl
     seatIds
     passengers { seatId fullName phone email documentId }
@@ -28,6 +28,7 @@ export default function BookingPage() {
   const params = useParams();
   const code = params.code;
   const [lookupCode, setLookupCode] = useState(code === "demo" ? "" : code);
+  const [lookupEmail, setLookupEmail] = useState("");
   const [accessReady, setAccessReady] = useState(false);
   const [booking, setBooking] = useState(null);
   const [error, setError] = useState("");
@@ -35,7 +36,7 @@ export default function BookingPage() {
   async function lookup() {
     setError("");
     try {
-      const data = await gql(BOOKING, { code: lookupCode }, { bookingCode: lookupCode });
+      const data = await gql(BOOKING, { code: lookupCode, email: lookupEmail || undefined }, { bookingCode: lookupCode });
       setBooking(data.booking);
     } catch (err) {
       setError(err.message);
@@ -92,6 +93,16 @@ export default function BookingPage() {
                 readOnly={code !== "demo"}
                 onChange={(event) => setLookupCode(event.target.value)}
                 placeholder="BK260617ABCD"
+              />
+            </label>
+            <label className="field">
+              <span>Email đặt vé</span>
+              <input
+                className="input"
+                type="email"
+                value={lookupEmail}
+                onChange={(event) => setLookupEmail(event.target.value)}
+                placeholder="guest@example.com"
               />
             </label>
             <button className="primary-button" onClick={lookup}>
@@ -153,7 +164,7 @@ export default function BookingPage() {
           )}
         </section>
       </main>
-      <ChatWidget bookingCode={booking?.code ?? ""} />
+      <ChatWidget bookingCode={booking?.code ?? ""} email={booking?.customerEmail ?? lookupEmail} />
     </SiteChrome>
   );
 }

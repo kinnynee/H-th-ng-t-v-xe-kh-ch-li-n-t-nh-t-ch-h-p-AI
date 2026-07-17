@@ -7,12 +7,12 @@
     "start": "node src/index.js"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^0.0.15",
     "@bus-ai/shared": "1.0.0",
-    "cors": "^2.8.5",
-    "express": "^4.21.2",
     "@grpc/grpc-js": "^1.10.0",
     "@grpc/proto-loader": "^0.7.10",
-    "@ai-sdk/openai": "^0.0.1",
-    "ai": "^3.1.15"
+    "ai": "^3.1.15",
+    "cors": "^2.8.5",
+    "express": "^4.21.2"
   }
 }

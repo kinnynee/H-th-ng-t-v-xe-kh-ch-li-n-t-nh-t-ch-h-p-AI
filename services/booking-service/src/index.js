@@ -49,6 +49,7 @@ if (database) {
 }
 const tripServiceUrl = process.env.TRIP_SERVICE_URL || "http://localhost:4010";
 const publicBookingUrl = process.env.PUBLIC_BOOKING_URL || "http://localhost:4020";
+const pendingPaymentTtlSeconds = Math.max(60, Number(process.env.PENDING_PAYMENT_TTL_SECONDS || 300));
 
 function grpcCall(method, payload) {
   return new Promise((resolve, reject) => {
@@ -220,6 +221,8 @@ function requireCurrentUser(req, res, next) {
 function canAccessBooking(req, booking) {
   const user = requestUser(req);
   if (user && (["ADMIN", "STAFF"].includes(user.role) || (booking.userId && booking.userId === user.id))) return true;
+  const lookupEmail = String(req.query.email ?? "").trim().toLowerCase();
+  if (lookupEmail && lookupEmail === String(booking.customerEmail ?? "").trim().toLowerCase()) return true;
   return verifiesGuestAccessToken(req.get("x-booking-access-token"), booking.guestAccessTokenHash);
 }
 
@@ -245,7 +248,7 @@ function rememberPassengers(userId, passengers) {
 function schedulePendingExpiry(booking) {
   if (booking._expiryTimerScheduled || booking.status !== "PENDING_PAYMENT") return;
   booking._expiryTimerScheduled = true;
-  const expiresAt = new Date(booking.createdAt).getTime() + 15 * 60 * 1000;
+  const expiresAt = new Date(booking.createdAt).getTime() + pendingPaymentTtlSeconds * 1000;
   const delay = Math.max(0, expiresAt - Date.now());
   setTimeout(async () => {
     const current = bookings.get(booking.code);
@@ -417,7 +420,7 @@ app.post("/bookings/:code/pay", async (req, res) => {
   });
   if (!confirm.ok) return res.status(409).json({ error: confirm.message });
 
-  booking.status = "TICKET_ISSUED";
+  booking.status = "PAID";
   booking.paidAt = new Date().toISOString();
   booking.updatedAt = booking.paidAt;
   booking.tickets = booking.passengers.map((passenger) => ({
@@ -429,11 +432,17 @@ app.post("/bookings/:code/pay", async (req, res) => {
   }));
   await saveBooking(database, booking);
 
-  const eventPayload = publicBooking(booking);
-  await publishRabbit("booking.paid", eventPayload, "booking.paid");
-  await publishKafka("payment-events", "PaymentSucceeded", eventPayload);
-  await publishKafka("booking-events", "BookingPaid", eventPayload);
-  res.json({ booking: eventPayload });
+  const paidEventPayload = publicBooking(booking);
+  await publishRabbit("booking.paid", paidEventPayload, "booking.paid");
+  await publishKafka("payment-events", "PaymentSucceeded", paidEventPayload);
+  await publishKafka("booking-events", "BookingPaid", paidEventPayload);
+
+  booking.status = "TICKET_ISSUED";
+  booking.updatedAt = new Date().toISOString();
+  await saveBooking(database, booking);
+  const issuedEventPayload = publicBooking(booking);
+  await publishKafka("booking-events", "TicketIssued", issuedEventPayload);
+  res.json({ booking: issuedEventPayload });
 });
 
 app.post("/bookings/:code/cancel", async (req, res) => {
