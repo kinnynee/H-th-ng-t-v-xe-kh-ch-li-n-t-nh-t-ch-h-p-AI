@@ -8,6 +8,7 @@ import { gql, money, shortDateTime, todayISO } from "../../lib/graphql";
 const ADMIN = `
 query Admin($input: SearchTripsInput!) {
   catalog { operators { id name hotline } vehicles { id plate type seatCount layout } }
+  stops { id city name }
   routes { id from to distanceKm durationMinutes pickup dropoff cancellationPolicy }
   searchTrips(input: $input) {
     trips { id routeId from to operatorName busType departureTime price status availableSeats }
@@ -18,11 +19,15 @@ query Admin($input: SearchTripsInput!) {
     revenueByDay { date revenue tickets }
     popularRoutes { route searches tickets }
   }
+  eventLogs(limit: 12) { eventId eventType topic occurredAt payload }
 }`;
 
 const LOGIN = `
 mutation Login($email: String!, $password: String!) {
-  adminLogin(email: $email, password: $password) { id email role name }
+  adminLogin(email: $email, password: $password) {
+    accessToken
+    user { id email role name }
+  }
 }`;
 
 const CREATE_ROUTE = `
@@ -38,6 +43,21 @@ mutation UpdateRoute($id: ID!, $input: RouteInput!) {
 const DELETE_ROUTE = `
 mutation DeleteRoute($id: ID!) {
   deleteRoute(id: $id)
+}`;
+
+const CREATE_STOP = `
+mutation CreateStop($input: StopInput!) {
+  createStop(input: $input) { id city name }
+}`;
+
+const UPDATE_STOP = `
+mutation UpdateStop($id: ID!, $input: StopInput!) {
+  updateStop(id: $id, input: $input) { id city name }
+}`;
+
+const DELETE_STOP = `
+mutation DeleteStop($id: ID!) {
+  deleteStop(id: $id)
 }`;
 
 const CREATE_TRIP = `
@@ -123,6 +143,7 @@ export default function AdminPage() {
     seatCount: 22,
     layout: "premium"
   });
+  const [stopForm, setStopForm] = useState({ id: "", city: "TP.HCM", name: "Bến xe mới" });
   const [ops, setOps] = useState({ tripId: "", seatIds: "A01", codeOrTicket: "" });
   const [tripBookings, setTripBookings] = useState([]);
   const [message, setMessage] = useState("");
@@ -140,14 +161,22 @@ export default function AdminPage() {
   }
 
   useEffect(() => {
+    const raw = localStorage.getItem("busAdminUser");
+    if (!raw || !localStorage.getItem("busAccessToken")) return;
+    const stored = JSON.parse(raw);
+    setUser(stored);
     load().catch((err) => setMessage(err.message));
   }, []);
 
   async function doLogin() {
     try {
       const result = await gql(LOGIN, login);
-      setUser(result.adminLogin);
-      setMessage(`Đăng nhập ${result.adminLogin.role}`);
+      const auth = result.adminLogin;
+      localStorage.setItem("busAccessToken", auth.accessToken);
+      localStorage.setItem("busAdminUser", JSON.stringify(auth.user));
+      setUser(auth.user);
+      await load();
+      setMessage(`Đăng nhập ${auth.user.role}`);
     } catch (err) {
       setMessage(err.message);
     }
@@ -201,6 +230,25 @@ export default function AdminPage() {
     await load();
   }
 
+  async function saveStop() {
+    const { id, ...input } = stopForm;
+    const result = id ? await gql(UPDATE_STOP, { id, input }) : await gql(CREATE_STOP, { input });
+    const stop = id ? result.updateStop : result.createStop;
+    setStopForm({ id: "", city: stop.city, name: "" });
+    setMessage(`Đã lưu điểm dừng ${stop.name}`);
+    await load();
+  }
+
+  function editStop(stop) {
+    setStopForm({ id: stop.id, city: stop.city, name: stop.name });
+  }
+
+  async function deleteStop(id) {
+    await gql(DELETE_STOP, { id });
+    setMessage("Đã xóa điểm dừng.");
+    await load();
+  }
+
   function editTrip(trip) {
     setTripForm({
       id: trip.id,
@@ -250,6 +298,10 @@ export default function AdminPage() {
     await gql(STATUS, { id, status });
     setMessage(`Đã chuyển ${id} sang ${status}`);
     await load();
+  }
+
+  function nextTripStatus(status) {
+    return { ACTIVE: "DEPARTED", DEPARTED: "COMPLETED", COMPLETED: "ACTIVE" }[status] || "ACTIVE";
   }
 
   async function blockSeats(blocked) {
@@ -372,6 +424,41 @@ export default function AdminPage() {
 
               <div className="panel">
                 <div className="panel-header">
+                  <h2>CRUD điểm dừng</h2>
+                  <p>Điểm dừng được dùng cho autocomplete và cấu hình tuyến.</p>
+                </div>
+                <div className="panel-body form-grid">
+                  <div className="two-cols">
+                    <input className="input" value={stopForm.city} onChange={(event) => setStopForm((current) => ({ ...current, city: event.target.value }))} placeholder="Tỉnh/thành" />
+                    <input className="input" value={stopForm.name} onChange={(event) => setStopForm((current) => ({ ...current, name: event.target.value }))} placeholder="Tên điểm dừng" />
+                  </div>
+                  <button className="primary-button" onClick={saveStop}>
+                    <Plus size={18} /> {stopForm.id ? "Cập nhật điểm dừng" : "Tạo điểm dừng"}
+                  </button>
+                  <table className="table">
+                    <thead>
+                      <tr><th>Tỉnh/thành</th><th>Điểm dừng</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                      {data.stops.map((stop) => (
+                        <tr key={stop.id}>
+                          <td>{stop.city}</td>
+                          <td>{stop.name}</td>
+                          <td>
+                            <button className="ghost-button" onClick={() => editStop(stop)}>Sửa</button>
+                            <button className="ghost-button" onClick={() => deleteStop(stop.id)}>
+                              <Trash2 size={16} /> Xóa
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="panel">
+                <div className="panel-header">
                   <h2>Tạo chuyến</h2>
                 </div>
                 <div className="panel-body form-grid">
@@ -392,6 +479,11 @@ export default function AdminPage() {
                   </select>
                   <input className="input" value={tripForm.departureTime} onChange={(event) => setTripForm((current) => ({ ...current, departureTime: event.target.value }))} />
                   <input className="input" type="number" value={tripForm.price} onChange={(event) => setTripForm((current) => ({ ...current, price: event.target.value }))} />
+                  <select className="select" value={tripForm.status} onChange={(event) => setTripForm((current) => ({ ...current, status: event.target.value }))}>
+                    <option value="ACTIVE">Đang bán (ACTIVE)</option>
+                    <option value="DEPARTED">Đã khởi hành (DEPARTED)</option>
+                    <option value="COMPLETED">Đã hoàn thành (COMPLETED)</option>
+                  </select>
                   <button className="primary-button" onClick={createTrip}>
                     <Save size={18} /> {tripForm.id ? "Cập nhật chuyến" : "Lưu chuyến"}
                   </button>
@@ -512,6 +604,32 @@ export default function AdminPage() {
                   </table>
                 </div>
               </div>
+
+              <div className="panel">
+                <div className="panel-header">
+                  <h2>Log sự kiện vận hành</h2>
+                  <p>Kafka events đã được Analytics Consumer lưu nhận.</p>
+                </div>
+                <div className="panel-body">
+                  {data.eventLogs.length === 0 && <div className="empty">Chưa có event vận hành.</div>}
+                  {data.eventLogs.length > 0 && (
+                    <table className="table">
+                      <thead>
+                        <tr><th>Thời điểm</th><th>Sự kiện</th><th>Topic</th></tr>
+                      </thead>
+                      <tbody>
+                        {data.eventLogs.map((event) => (
+                          <tr key={event.eventId} title={event.payload}>
+                            <td>{shortDateTime(event.occurredAt)}</td>
+                            <td>{event.eventType}</td>
+                            <td>{event.topic}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
             </div>
           </section>
         )}
@@ -536,8 +654,8 @@ export default function AdminPage() {
                       <td>{trip.availableSeats}</td>
                       <td>{trip.status}</td>
                       <td>
-                        <button className="ghost-button" onClick={() => updateStatus(trip.id, trip.status === "ACTIVE" ? "DEPARTED" : "ACTIVE")}>
-                          <Route size={16} /> Đổi
+                        <button className="ghost-button" onClick={() => updateStatus(trip.id, nextTripStatus(trip.status))}>
+                          <Route size={16} /> → {nextTripStatus(trip.status)}
                         </button>
                         <button className="ghost-button" onClick={() => editTrip(trip)}>Sửa</button>
                         <button className="ghost-button" onClick={() => deleteTrip(trip.id)}>
