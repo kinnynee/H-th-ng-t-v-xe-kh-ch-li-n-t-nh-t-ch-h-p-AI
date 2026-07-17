@@ -1,13 +1,10 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import express from "express";
 import cors from "cors";
 import grpc from "@grpc/grpc-js";
-import protoLoader from "@grpc/proto-loader";
 import { eventEnvelope, publishKafkaEnvelope, publishRabbitEnvelope } from "@bus-ai/shared/broker";
 import { connectPostgres } from "@bus-ai/shared/postgres";
 import { errorHandler, notFoundHandler } from "@bus-ai/shared/http";
-import { bindGrpcServer, createServiceGrpcServer } from "@bus-ai/shared/grpc";
+import { bindGrpcServer, createGrpcClients, createServiceGrpcServer } from "@bus-ai/shared/grpc";
 import { createLogger, registerProcessErrorHandlers, requestLoggingMiddleware } from "@bus-ai/shared/logger";
 import { assertAuthConfiguration, authenticate, authorize, hashPassword, isPasswordHash, issueAccessToken, verifyPassword } from "@bus-ai/shared/auth";
 import { demoUsers } from "./demo-users.js";
@@ -25,21 +22,14 @@ import {
 } from "./repository.js";
 import { createHealthCheck } from "./health.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const protoPath = path.resolve(__dirname, "../../../proto/seat_inventory.proto");
-const packageDefinition = protoLoader.loadSync(protoPath, {
-  keepCase: false,
-  longs: String,
-  enums: String,
-  defaults: true,
-  oneofs: true
+const grpcClients = createGrpcClients({
+  seatInventory: {
+    protoFile: "seat_inventory.proto",
+    servicePath: "bus.seat.v1.SeatInventoryService",
+    target: process.env.SEAT_GRPC_URL || "localhost:50051"
+  }
 });
-const proto = grpc.loadPackageDefinition(packageDefinition).bus.seat.v1;
-
-const seatClient = new proto.SeatInventoryService(
-  process.env.SEAT_GRPC_URL || "localhost:50051",
-  grpc.credentials.createInsecure()
-);
+const seatClient = grpcClients.seatInventory;
 
 const logger = createLogger("booking-service");
 registerProcessErrorHandlers(logger);
@@ -716,6 +706,7 @@ let shuttingDown = false;
 function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
+  grpcClients.closeAll();
   const force = setTimeout(() => {
     grpcServer.forceShutdown();
     process.exit(1);

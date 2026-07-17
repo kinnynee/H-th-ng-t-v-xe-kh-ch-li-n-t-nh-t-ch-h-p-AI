@@ -4,7 +4,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import grpc from "@grpc/grpc-js";
 import protoLoader from "@grpc/proto-loader";
-import { bindGrpcServer, createServiceGrpcServer } from "@bus-ai/shared/grpc";
+import { bindGrpcServer, createGrpcClients, createServiceGrpcServer } from "@bus-ai/shared/grpc";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const protoDirectory = path.resolve(__dirname, "../proto");
@@ -78,4 +78,40 @@ test("common gRPC router supports every RPC style and standard health", async (t
 
   const healthStatus = await unary(health.check.bind(health), { service: "router-test" });
   assert.equal(healthStatus.status, "SERVING");
+});
+
+test("gRPC client registry creates named clients from repository protos", async (t) => {
+  const server = createServiceGrpcServer({ serviceName: "client-registry-test" });
+  const port = await bindGrpcServer(server, "127.0.0.1:0", "client-registry-test");
+  const grpcClients = createGrpcClients({
+    router: {
+      protoFile: "service_router.proto",
+      servicePath: "bus.platform.v1.ServiceRouter",
+      target: `127.0.0.1:${port}`
+    },
+    health: {
+      protoFile: "health.proto",
+      servicePath: "grpc.health.v1.Health",
+      target: `127.0.0.1:${port}`
+    }
+  });
+
+  t.after(() => {
+    grpcClients.closeAll();
+    server.forceShutdown();
+  });
+
+  const info = await unary(grpcClients.router.getServiceInfo.bind(grpcClients.router), {});
+  assert.equal(info.serviceName, "client-registry-test");
+
+  const health = await unary(grpcClients.health.check.bind(grpcClients.health), {});
+  assert.equal(health.status, "SERVING");
+  assert.equal(Object.keys(grpcClients).join(","), "router,health");
+});
+
+test("gRPC client registry rejects incomplete client definitions", () => {
+  assert.throws(
+    () => createGrpcClients({ seatInventory: { protoFile: "seat_inventory.proto" } }),
+    /servicePath/
+  );
 });
