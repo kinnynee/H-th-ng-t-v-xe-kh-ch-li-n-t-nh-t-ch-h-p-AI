@@ -6,7 +6,9 @@ import grpc from "@grpc/grpc-js";
 import protoLoader from "@grpc/proto-loader";
 import { eventEnvelope, publishKafkaEnvelope, publishRabbitEnvelope } from "@bus-ai/shared/broker";
 import { connectPostgres } from "@bus-ai/shared/postgres";
+import { errorHandler, notFoundHandler } from "@bus-ai/shared/http";
 import { bindGrpcServer, createServiceGrpcServer } from "@bus-ai/shared/grpc";
+import { createLogger, registerProcessErrorHandlers, requestLoggingMiddleware } from "@bus-ai/shared/logger";
 import { assertAuthConfiguration, authenticate, authorize, hashPassword, isPasswordHash, issueAccessToken, verifyPassword } from "@bus-ai/shared/auth";
 import { demoUsers } from "./demo-users.js";
 import { createGuestAccessToken, hashGuestAccessToken, verifiesGuestAccessToken } from "./guest-access.js";
@@ -39,7 +41,10 @@ const seatClient = new proto.SeatInventoryService(
   grpc.credentials.createInsecure()
 );
 
+const logger = createLogger("booking-service");
+registerProcessErrorHandlers(logger);
 const app = express();
+app.use(requestLoggingMiddleware(logger));
 app.use(cors());
 app.use(express.json());
 assertAuthConfiguration();
@@ -698,11 +703,13 @@ const grpcServer = createServiceGrpcServer({
   serviceName: "booking-service",
   health: operationalHealth
 });
+app.use(notFoundHandler);
+app.use(errorHandler);
 await bindGrpcServer(grpcServer, process.env.BOOKING_GRPC_BIND || "0.0.0.0:50053", "booking-service");
 
 const port = Number(process.env.PORT || 4020);
 const httpServer = app.listen(port, () => {
-  console.log(`[booking-service] listening on http://localhost:${port}`);
+  logger.info("service_started", { port });
 });
 
 let shuttingDown = false;

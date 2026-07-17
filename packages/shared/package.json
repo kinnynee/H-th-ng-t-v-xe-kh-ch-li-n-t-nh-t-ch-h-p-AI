@@ -12,7 +12,8 @@
     "./migrations": "./src/migrations.js",
     "./http": "./src/http.js",
     "./auth": "./src/auth.js",
-    "./grpc": "./src/grpc.js"
+    "./grpc": "./src/grpc.js",
+    "./logger": "./src/logger.js"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.12.2",

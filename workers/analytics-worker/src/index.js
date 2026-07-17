@@ -3,10 +3,15 @@ import cors from "cors";
 import { subscribeKafka } from "@bus-ai/shared/broker";
 import { connectPostgres } from "@bus-ai/shared/postgres";
 import { assertAuthConfiguration, authenticate, authorize } from "@bus-ai/shared/auth";
+import { errorHandler, notFoundHandler } from "@bus-ai/shared/http";
+import { createLogger, registerProcessErrorHandlers, requestLoggingMiddleware } from "@bus-ai/shared/logger";
 import { applyAnalyticsEvent, listAnalyticsEvents, loadAnalyticsState } from "./repository.js";
 import { createEmptyAnalyticsState } from "./state.js";
 
+const logger = createLogger("analytics-worker");
+registerProcessErrorHandlers(logger);
 const app = express();
+app.use(requestLoggingMiddleware(logger));
 app.use(cors());
 assertAuthConfiguration();
 
@@ -99,6 +104,8 @@ app.get("/events", requireRoles("ADMIN", "STAFF"), async (req, res) => {
 });
 
 const port = Number(process.env.PORT || 4050);
+app.use(notFoundHandler);
+app.use(errorHandler);
 app.listen(port, () => {
-  console.log(`[analytics-worker] listening on http://localhost:${port}`);
+  logger.info("service_started", { port });
 });

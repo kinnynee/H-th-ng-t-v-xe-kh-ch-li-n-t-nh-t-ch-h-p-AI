@@ -311,8 +311,12 @@ export default function AdminPage() {
   }
 
   async function checkIn() {
-    const result = await gql(CHECKIN, { codeOrTicket: ops.codeOrTicket });
-    setMessage(`Check-in ${result.checkIn.code}: ${result.checkIn.status}`);
+    try {
+      const result = await gql(CHECKIN, { codeOrTicket: ops.codeOrTicket });
+      setMessage(`Check-in ${result.checkIn.code}: ${result.checkIn.status}`);
+    } catch (error) {
+      setMessage(error.message);
+    }
   }
 
   async function loadTripBookings() {

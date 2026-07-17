@@ -5,6 +5,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assistantSystemPrompt, cancellationPolicy, checkinPolicy } from "@bus-ai/shared/policy";
 import { isoDate } from "@bus-ai/shared/seed";
+import { errorHandler, notFoundHandler } from "@bus-ai/shared/http";
+import { createLogger, registerProcessErrorHandlers, requestLoggingMiddleware } from "@bus-ai/shared/logger";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -35,7 +37,10 @@ function loadEnvFile(filePath) {
 
 loadEnvFile(resolve(__dirname, "../../../.env"));
 
+const logger = createLogger("ai-service");
+registerProcessErrorHandlers(logger);
 const app = express();
+app.use(requestLoggingMiddleware(logger));
 app.use(cors());
 app.use(express.json());
 
@@ -254,7 +259,7 @@ async function aiSdkAssistant(input, accessHeaders) {
       toolCalls: result.toolCalls?.map((call) => call.toolName) ?? []
     };
   } catch (error) {
-    console.warn(`[ai-service] AI SDK fallback: ${error.message}`);
+    logger.warn("ai_sdk_fallback", { error });
     return fallbackAssistant(input, accessHeaders);
   }
 }
@@ -276,6 +281,8 @@ app.post("/chat", async (req, res) => {
 });
 
 const port = Number(process.env.PORT || 4100);
+app.use(notFoundHandler);
+app.use(errorHandler);
 app.listen(port, () => {
-  console.log(`[ai-service] listening on http://localhost:${port}`);
+  logger.info("service_started", { port, mode: process.env.OPENAI_API_KEY ? "ai-sdk" : "rule-based" });
 });

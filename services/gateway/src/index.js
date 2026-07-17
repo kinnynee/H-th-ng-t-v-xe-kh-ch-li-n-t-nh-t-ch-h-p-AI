@@ -3,6 +3,7 @@ import { createSchema, createYoga } from "graphql-yoga";
 import { seatChangedRoutingKey, subscribeRabbitEphemeral } from "@bus-ai/shared/broker";
 import { startGrpcServer } from "@bus-ai/shared/grpc";
 import { assertAuthConfiguration, authenticate, authorize } from "@bus-ai/shared/auth";
+import { createLogger, getLogContext, observeNodeRequest, registerProcessErrorHandlers, runWithLogContext } from "@bus-ai/shared/logger";
 import { createHealthCheck } from "./health.js";
 
 const tripUrl = process.env.TRIP_SERVICE_URL || "http://localhost:4010";
@@ -10,6 +11,8 @@ const bookingUrl = process.env.BOOKING_SERVICE_URL || "http://localhost:4020";
 const aiUrl = process.env.AI_SERVICE_URL || "http://localhost:4100";
 const analyticsUrl = process.env.ANALYTICS_SERVICE_URL || "http://localhost:4050";
 
+const logger = createLogger("gateway");
+registerProcessErrorHandlers(logger);
 const operationalHealth = createHealthCheck({ tripUrl, bookingUrl, analyticsUrl });
 assertAuthConfiguration();
 
@@ -57,16 +60,23 @@ function publishFallbackSeatChange(payload) {
 }
 
 async function requestJSON(url, options = {}) {
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      "content-type": "application/json",
-      ...(options.headers ?? {})
-    }
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || payload.message || response.statusText);
-  return payload;
+  try {
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        "content-type": "application/json",
+        ...(getLogContext().requestId ? { "x-request-id": getLogContext().requestId } : {}),
+        ...(options.headers ?? {})
+      }
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || payload.message || response.statusText);
+    return payload;
+  } catch (error) {
+    const parsed = new URL(url);
+    logger.warn("upstream_request_failed", { target: `${parsed.host}${parsed.pathname}`, error });
+    throw error;
+  }
 }
 
 function qs(input = {}) {
@@ -662,28 +672,33 @@ const grpcServer = await startGrpcServer({
 });
 
 const server = createServer((req, res) => {
-  const pathname = new URL(req.url || "/", "http://localhost").pathname;
-  if (req.method === "GET" && pathname === "/live") {
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ ok: true, service: "gateway", status: "LIVE" }));
-    return;
-  }
-  if (req.method === "GET" && (pathname === "/health" || pathname === "/ready")) {
-    void operationalHealth().then((health) => {
-      res.writeHead(health.ok ? 200 : 503, { "content-type": "application/json" });
-      res.end(JSON.stringify({ service: "gateway", ...health }));
-    }).catch((error) => {
-      res.writeHead(503, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ok: false, service: "gateway", error: error.message }));
-    });
-    return;
-  }
-  return yoga(req, res);
+  const requestId = observeNodeRequest(logger, req, res);
+  return runWithLogContext({ requestId }, () => {
+    const pathname = new URL(req.url || "/", "http://localhost").pathname;
+    if (req.method === "GET" && pathname === "/live") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, service: "gateway", status: "LIVE", requestId }));
+      return;
+    }
+    if (req.method === "GET" && (pathname === "/health" || pathname === "/ready")) {
+      void operationalHealth().then((health) => {
+        res.writeHead(health.ok ? 200 : 503, { "content-type": "application/json" });
+        res.end(JSON.stringify({ service: "gateway", ...health, requestId }));
+      }).catch((error) => {
+        logger.error("health_check_failed", { requestId, error });
+        res.writeHead(503, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: false, service: "gateway", error: "Service unavailable", requestId }));
+      });
+      return;
+    }
+    return yoga(req, res);
+  });
 });
 const port = Number(process.env.PORT || 4000);
 server.listen(port, () => {
-  console.log(`[gateway] GraphQL listening on http://localhost:${port}/graphql`);
+  logger.info("service_started", { port, graphqlEndpoint: "/graphql" });
 });
+server.on("error", (error) => logger.error("http_server_error", { error }));
 
 let shuttingDown = false;
 function shutdown() {
