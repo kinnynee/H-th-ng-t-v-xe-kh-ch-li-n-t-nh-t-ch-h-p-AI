@@ -9,6 +9,26 @@ x-app-build: &app-build
     - bus-network
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bus_dev_password}
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/00-create-databases.sql:/docker-entrypoint-initdb.d/00-create-databases.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - bus-network
+
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -62,6 +82,47 @@ services:
     networks:
       - bus-network
 
+  trip-migrate:
+    <<: *app-build
+    restart: "no"
+    command: sh -c "npm run db:migrate -w services/trip-service && npm run db:seed -w services/trip-service"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bus}:${POSTGRES_PASSWORD:-bus_dev_password}@postgres:5432/trip_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  booking-migrate:
+    <<: *app-build
+    restart: "no"
+    command: sh -c "npm run db:migrate -w services/booking-service && npm run db:seed -w services/booking-service"
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bus}:${POSTGRES_PASSWORD:-bus_dev_password}@postgres:5432/booking_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  seat-migrate:
+    <<: *app-build
+    restart: "no"
+    command: sh -c "npm run db:migrate -w services/seat-service && npm run db:seed -w services/seat-service"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bus}:${POSTGRES_PASSWORD:-bus_dev_password}@postgres:5432/seat_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  analytics-migrate:
+    <<: *app-build
+    restart: "no"
+    command: sh -c "npm run db:migrate -w workers/analytics-worker && npm run db:seed -w workers/analytics-worker"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bus}:${POSTGRES_PASSWORD:-bus_dev_password}@postgres:5432/analytics_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   web:
     <<: *app-build
     command: npm run dev -w apps/web
@@ -83,23 +144,30 @@ services:
     <<: *app-build
     command: npm run dev -w services/gateway
     environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       TRIP_SERVICE_URL: http://trip-service:4010
       BOOKING_SERVICE_URL: http://booking-service:4020
       AI_SERVICE_URL: http://ai-service:4100
       ANALYTICS_SERVICE_URL: http://analytics-worker:4050
+      GATEWAY_GRPC_BIND: 0.0.0.0:50054
+      AUTH_SECRET: ${AUTH_SECRET:-local-development-secret-change-before-production}
     ports:
       - "4001:4000"
+      - "50054:50054"
     depends_on:
       trip-service:
-        condition: service_started
+        condition: service_healthy
       booking-service:
-        condition: service_started
+        condition: service_healthy
       ai-service:
-        condition: service_started
+        condition: service_healthy
       analytics-worker:
-        condition: service_started
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:4000/graphql',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({query:'{ health }'})}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      test: ["CMD", "node", "scripts/grpc-healthcheck.js", "localhost:50054", "gateway"]
       interval: 10s
       timeout: 5s
       retries: 20
@@ -108,17 +176,26 @@ services:
     <<: *app-build
     command: npm run dev -w services/trip-service
     environment:
+      NODE_ENV: ${NODE_ENV:-development}
       REDIS_URL: redis://redis:6379
       KAFKA_BROKERS: kafka:9092
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bus}:${POSTGRES_PASSWORD:-bus_dev_password}@postgres:5432/trip_db
+      TRIP_GRPC_BIND: 0.0.0.0:50052
+      AUTH_SECRET: ${AUTH_SECRET:-local-development-secret-change-before-production}
     ports:
       - "4010:4010"
+      - "50052:50052"
     depends_on:
+      postgres:
+        condition: service_healthy
+      trip-migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       kafka:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:4010/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      test: ["CMD", "node", "scripts/grpc-healthcheck.js", "localhost:50052", "trip-service"]
       interval: 10s
       timeout: 5s
       retries: 20
@@ -127,27 +204,51 @@ services:
     <<: *app-build
     command: npm run dev -w services/seat-service
     environment:
+      NODE_ENV: ${NODE_ENV:-development}
       REDIS_URL: redis://redis:6379
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       SEAT_GRPC_BIND: 0.0.0.0:50051
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bus}:${POSTGRES_PASSWORD:-bus_dev_password}@postgres:5432/seat_db
+      AUTH_SECRET: ${AUTH_SECRET:-local-development-secret-change-before-production}
     ports:
       - "50051:50051"
     depends_on:
+      postgres:
+        condition: service_healthy
+      seat-migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "scripts/grpc-healthcheck.js", "localhost:50051", "seat-service"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
 
   booking-service:
     <<: *app-build
     command: npm run dev -w services/booking-service
     environment:
+      NODE_ENV: ${NODE_ENV:-development}
       SEAT_GRPC_URL: seat-service:50051
       TRIP_SERVICE_URL: http://trip-service:4010
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       KAFKA_BROKERS: kafka:9092
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bus}:${POSTGRES_PASSWORD:-bus_dev_password}@postgres:5432/booking_db
+      BOOKING_GRPC_BIND: 0.0.0.0:50053
+      AUTH_SECRET: ${AUTH_SECRET:-local-development-secret-change-before-production}
     ports:
       - "4020:4020"
+      - "50053:50053"
     depends_on:
+      postgres:
+        condition: service_healthy
+      booking-migrate:
+        condition: service_completed_successfully
       seat-service:
-        condition: service_started
+        condition: service_healthy
       trip-service:
         condition: service_healthy
       rabbitmq:
@@ -155,7 +256,7 @@ services:
       kafka:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:4020/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      test: ["CMD", "node", "scripts/grpc-healthcheck.js", "localhost:50053", "booking-service"]
       interval: 10s
       timeout: 5s
       retries: 20
@@ -180,10 +281,17 @@ services:
     <<: *app-build
     command: npm run dev -w workers/analytics-worker
     environment:
+      NODE_ENV: ${NODE_ENV:-development}
       KAFKA_BROKERS: kafka:9092
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bus}:${POSTGRES_PASSWORD:-bus_dev_password}@postgres:5432/analytics_db
+      AUTH_SECRET: ${AUTH_SECRET:-local-development-secret-change-before-production}
     ports:
       - "4050:4050"
     depends_on:
+      postgres:
+        condition: service_healthy
+      analytics-migrate:
+        condition: service_completed_successfully
       kafka:
         condition: service_healthy
     healthcheck:
@@ -239,3 +347,6 @@ services:
 networks:
   bus-network:
     driver: bridge
+
+volumes:
+  postgres-data:
