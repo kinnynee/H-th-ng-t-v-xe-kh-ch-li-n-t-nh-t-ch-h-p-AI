@@ -14,14 +14,14 @@ query Trip($id: ID!) {
   trip(id: $id) {
     id from to pickup dropoff operatorName busType vehiclePlate availableSeats
     departureTime arrivalTime durationMinutes price cancellationPolicy
-    seats { id label floor status holdExpiresIn }
+    seats { id label floor row column status holdExpiresIn }
   }
 }`;
 
 const HOLD = `
 mutation Hold($tripId: ID!, $seatIds: [String!]!, $customerEmail: String, $ttlSeconds: Int) {
   holdSeats(tripId: $tripId, seatIds: $seatIds, customerEmail: $customerEmail, ttlSeconds: $ttlSeconds) {
-    ok message holdToken expiresIn seats { id label floor status holdExpiresIn }
+    ok message holdToken expiresIn seats { id label floor row column status holdExpiresIn }
   }
 }`;
 
@@ -36,7 +36,7 @@ const PAY = `
 mutation Pay($code: ID!, $success: Boolean!) {
   payBooking(code: $code, success: $success) {
     code status totalAmount customerEmail ticketHtmlUrl ticketPdfUrl
-    tickets { id passengerName seatId qrPayload issuedAt status checkedInAt }
+    tickets { id passengerName seatId qrPayload qrCodeDataUrl issuedAt status checkedInAt }
   }
 }`;
 
@@ -541,7 +541,8 @@ export default function TripDetail() {
                         </span>
                         <h3>{ticket.id}</h3>
                         <p>{ticket.passengerName}, ghế {ticket.seatId}</p>
-                        <p className="muted">QR: {ticket.qrPayload}</p>
+                        <img className="ticket-qr-code" src={ticket.qrCodeDataUrl} alt={`QR check-in ${ticket.id}`} width="160" height="160" />
+                        <p className="muted">Mã QR check-in: {ticket.qrPayload}</p>
                       </div>
                     ))}
                     <Link className="primary-button" href={bookingLink()}>

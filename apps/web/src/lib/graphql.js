@@ -1,3 +1,5 @@
+import { reportGraphQLError } from "./observability";
+
 export function getGraphQLEndpoint() {
   if (typeof window === "undefined") {
     return process.env.GRAPHQL_URL || process.env.NEXT_PUBLIC_GRAPHQL_URL || "http://localhost:4000/graphql";
@@ -44,15 +46,21 @@ export async function gql(query, variables = {}, { bookingCode = "" } = {}) {
   try {
     payload = JSON.parse(rawPayload);
   } catch {
-    throw new Error(
+    const error = new Error(
       `GraphQL gateway không trả về JSON (HTTP ${response.status}). Kiểm tra endpoint ${getGraphQLEndpoint()}.`
     );
+    reportGraphQLError(error, query, response.status);
+    throw error;
   }
   if (!response.ok) {
-    throw new Error(payload.errors?.map((error) => error.message).join("\n") || payload.error || `GraphQL request failed (HTTP ${response.status}).`);
+    const error = new Error(payload.errors?.map((item) => item.message).join("\n") || payload.error || `GraphQL request failed (HTTP ${response.status}).`);
+    reportGraphQLError(error, query, response.status);
+    throw error;
   }
   if (payload.errors?.length) {
-    throw new Error(payload.errors.map((error) => error.message).join("\n"));
+    const error = new Error(payload.errors.map((item) => item.message).join("\n"));
+    reportGraphQLError(error, query, response.status);
+    throw error;
   }
   return payload.data;
 }
@@ -78,7 +86,7 @@ export function subscribeToSeatChanges(tripId, onChange, onError = () => {}) {
   const query = `subscription SeatChanged($tripId: ID!) {
     seatChanged(tripId: $tripId) {
       tripId message
-      seats { id label floor status holdExpiresIn }
+      seats { id label floor row column status holdExpiresIn }
     }
   }`;
 

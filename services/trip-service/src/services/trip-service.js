@@ -58,11 +58,60 @@ export function createTripService({ stores, locations, operators, cache, reposit
     return text;
   }
 
+  function defaultSeatLayout(seatCount, layout = "standard") {
+    const normalizedCount = Number(seatCount);
+    const isSleeper = /upper|lower|sleeper|giường|giuong/i.test(String(layout));
+    const floors = isSleeper ? 2 : 1;
+    const seatsPerFloor = Math.ceil(normalizedCount / floors);
+    const columns = /2\s*[-x]\s*2/.test(String(layout)) ? [1, 2, 4, 5] : [1, 3];
+    return Array.from({ length: normalizedCount }, (_, index) => {
+      const floor = Math.floor(index / seatsPerFloor) + 1;
+      const indexOnFloor = index % seatsPerFloor;
+      const prefix = floors === 1 ? "A" : (floor === 1 ? "A" : "B");
+      const id = `${prefix}${String(indexOnFloor + 1).padStart(2, "0")}`;
+      return {
+        id,
+        label: id,
+        floor,
+        row: Math.floor(indexOnFloor / columns.length) + 1,
+        column: columns[indexOnFloor % columns.length]
+      };
+    });
+  }
+
+  function normalizeSeatLayout(value, seatCount, layout) {
+    const source = Array.isArray(value) && value.length ? value : defaultSeatLayout(seatCount, layout);
+    if (source.length !== seatCount) {
+      throw httpError(400, "Seat layout must contain exactly seatCount seats");
+    }
+    const ids = new Set();
+    return source.map((item, index) => {
+      const id = requireText(item?.id, `Seat ${index + 1} ID`).toUpperCase();
+      const label = String(item?.label ?? id).trim() || id;
+      const floor = Number(item?.floor ?? 1);
+      const row = Number(item?.row ?? Math.floor(index / 4) + 1);
+      const column = Number(item?.column ?? (index % 4) + 1);
+      if (ids.has(id)) throw httpError(400, `Seat layout contains duplicate seat ${id}`);
+      if (![floor, row, column].every((number) => Number.isInteger(number) && number > 0)) {
+        throw httpError(400, `Seat ${id} has an invalid position`);
+      }
+      ids.add(id);
+      return { id, label, floor, row, column };
+    });
+  }
+
+  function publicVehicle(vehicle) {
+    return {
+      ...vehicle,
+      seatLayout: normalizeSeatLayout(vehicle.seatLayout, Number(vehicle.seatCount), vehicle.layout)
+    };
+  }
+
   return {
     health: () => ({ ok: true, service: "trip-service", routes: stores.routes.size, trips: stores.trips.size }),
-    catalog: () => ({ locations: catalogLocations(), operators, vehicles: [...stores.vehicles.values()] }),
+    catalog: () => ({ locations: catalogLocations(), operators, vehicles: [...stores.vehicles.values()].map(publicVehicle) }),
     listStops: () => ({ stops: [...stores.stops.values()] }),
-    listVehicles: () => ({ vehicles: [...stores.vehicles.values()] }),
+    listVehicles: () => ({ vehicles: [...stores.vehicles.values()].map(publicVehicle) }),
     listRoutes: () => ({ routes: [...stores.routes.values()] }),
 
     async createStop(input) {
@@ -93,14 +142,16 @@ export function createTripService({ stores, locations, operators, cache, reposit
     },
 
     async createVehicle(input) {
+      const seatCount = Number(input.seatCount ?? 34);
+      if (!Number.isInteger(seatCount) || seatCount < 1) throw httpError(400, "seatCount must be a positive integer");
       const vehicle = {
         id: input.id || `VEH-${Date.now()}`,
         plate: requireText(input.plate, "Vehicle plate"),
         type: requireText(input.type, "Vehicle type"),
-        seatCount: Number(input.seatCount ?? 34),
-        layout: input.layout || "standard"
+        seatCount,
+        layout: input.layout || "standard",
+        seatLayout: normalizeSeatLayout(input.seatLayout, seatCount, input.layout)
       };
-      if (!Number.isInteger(vehicle.seatCount) || vehicle.seatCount < 1) throw httpError(400, "seatCount must be a positive integer");
       stores.vehicles.set(vehicle.id, vehicle);
       await repository.saveVehicle(vehicle);
       await publishEvent("VehicleCreated", { vehicleId: vehicle.id, plate: vehicle.plate });
@@ -110,7 +161,17 @@ export function createTripService({ stores, locations, operators, cache, reposit
     async updateVehicle(id, input) {
       const current = stores.vehicles.get(id);
       if (!current) throw httpError(404, "Vehicle not found");
-      const vehicle = { ...current, ...input, id, seatCount: Number(input.seatCount ?? current.seatCount) };
+      const seatCount = Number(input.seatCount ?? current.seatCount);
+      const layout = input.layout ?? current.layout;
+      if (!Number.isInteger(seatCount) || seatCount < 1) throw httpError(400, "seatCount must be a positive integer");
+      const vehicle = {
+        ...current,
+        ...input,
+        id,
+        seatCount,
+        layout,
+        seatLayout: normalizeSeatLayout(input.seatLayout ?? current.seatLayout, seatCount, layout)
+      };
       stores.vehicles.set(id, vehicle);
       await repository.saveVehicle(vehicle);
       await publishEvent("VehicleUpdated", { vehicleId: id, plate: vehicle.plate });
@@ -190,12 +251,24 @@ export function createTripService({ stores, locations, operators, cache, reposit
         routeId: route.id, from: route.from, to: route.to, pickup: route.pickup, dropoff: route.dropoff,
         operatorId: operator.id, operatorName: operator.name,
         vehicleId: vehicle.id, vehiclePlate: vehicle.plate, busType: vehicle.type, seatCount: vehicle.seatCount,
+        seatLayout: normalizeSeatLayout(vehicle.seatLayout, Number(vehicle.seatCount), vehicle.layout),
         date: departureTime.slice(0, 10), departureTime,
-        arrivalTime: new Date(new Date(departureTime).getTime() + route.durationMinutes * 60_000).toISOString(),
+        arrivalTime: "",
         durationMinutes: route.durationMinutes, price: Number(input.price ?? current?.price ?? 250000),
         status: input.status ?? current?.status ?? "ACTIVE", cancellationPolicy: route.cancellationPolicy
       };
       if (trip.price < 0) throw httpError(400, "Trip price must not be negative");
+      const departureChanged = Boolean(id && input.departureTime && input.departureTime !== current.departureTime);
+      const requestedArrival = String(input.arrivalTime ?? "").trim()
+        || (!departureChanged ? String(current?.arrivalTime ?? "").trim() : "");
+      const fallbackArrival = new Date(new Date(departureTime).getTime() + route.durationMinutes * 60_000).toISOString();
+      const arrivalTime = requestedArrival || fallbackArrival;
+      if (Number.isNaN(Date.parse(arrivalTime))) throw httpError(400, "Arrival time is invalid");
+      if (Date.parse(arrivalTime) <= Date.parse(departureTime)) {
+        throw httpError(400, "Arrival time must be after departure time");
+      }
+      trip.arrivalTime = arrivalTime;
+      trip.durationMinutes = Math.round((Date.parse(arrivalTime) - Date.parse(departureTime)) / 60_000);
       stores.trips.set(trip.id, trip);
       await repository.saveTrip(trip);
       await publishEvent(id ? "TripUpdated" : "TripCreated", { tripId: trip.id, routeId: trip.routeId, status: trip.status });

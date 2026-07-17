@@ -10,11 +10,14 @@ export function httpError(status, message) {
 }
 
 export function notFoundHandler(_req, res) {
-  res.status(404).json({ error: "Endpoint not found" });
+  res.status(404).json({ error: "Endpoint not found", requestId: _req.requestId });
 }
 
-export function errorHandler(error, _req, res, _next) {
+export function errorHandler(error, req, res, _next) {
   const status = Number(error.status) || 500;
-  if (status >= 500) console.error("[http]", error);
-  res.status(status).json({ error: error.message || "Internal server error" });
+  const safeMessage = status >= 500 ? "Internal server error" : error.message || "Request failed";
+  const log = req.log;
+  if (status >= 500) log?.error("http_request_failed", { statusCode: status, error });
+  else log?.warn("http_request_rejected", { statusCode: status, error: error.message });
+  res.status(status).json({ error: safeMessage, requestId: req.requestId });
 }

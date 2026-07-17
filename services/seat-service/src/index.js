@@ -4,7 +4,14 @@ import { connectPostgres } from "@bus-ai/shared/postgres";
 import { publishRabbit, seatChangedRoutingKey } from "@bus-ai/shared/broker";
 import { bindGrpcServer, createServiceGrpcServer, loadGrpcProto } from "@bus-ai/shared/grpc";
 import { createSeatInventory } from "./core.js";
-import { ensureSeatCatalog, loadSeatCatalog, loadSeatState, saveSeatState } from "./repository.js";
+import {
+  confirmSeatAssignments,
+  ensureSeatCatalog,
+  loadSeatCatalog,
+  loadSeatState,
+  releaseSeatAssignments,
+  setSeatAssignmentsBlocked
+} from "./repository.js";
 import { createSeatGrpcController } from "./controllers/seat-grpc-controller.js";
 import { createHealthCheck } from "./health.js";
 import { assertAuthConfiguration } from "@bus-ai/shared/auth";
@@ -23,8 +30,11 @@ const inventory = createSeatInventory({
   trips: buildTrips(),
   seatCatalog,
   initialState,
+  loadState: database ? () => loadSeatState(database) : null,
+  confirmAssignments: (input) => confirmSeatAssignments(database, input),
+  releaseAssignments: (input) => releaseSeatAssignments(database, input),
+  setAssignmentsBlocked: (input) => setSeatAssignmentsBlocked(database, input),
   persistCatalog: (tripId, seats) => ensureSeatCatalog(database, tripId, seats),
-  persistState: (state) => saveSeatState(database, state),
   onSeatChanged: ({ tripId, seats, message }) => publishRabbit(
     "SeatChanged",
     { tripId, seats, message },

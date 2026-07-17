@@ -148,7 +148,7 @@ export async function aiSdkAssistant(input) {
       import("ai"),
       import("zod")
     ]);
-    
+
     let model;
     if (config.githubModelsToken) {
       const { busAdvisorChatModel } = await import("./githubModels.js");

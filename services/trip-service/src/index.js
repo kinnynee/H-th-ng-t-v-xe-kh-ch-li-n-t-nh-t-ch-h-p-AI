@@ -6,6 +6,7 @@ import { publishKafka } from "@bus-ai/shared/broker";
 import { connectPostgres } from "@bus-ai/shared/postgres";
 import { errorHandler, notFoundHandler } from "@bus-ai/shared/http";
 import { bindGrpcServer, createServiceGrpcServer } from "@bus-ai/shared/grpc";
+import { createLogger, registerProcessErrorHandlers, requestLoggingMiddleware } from "@bus-ai/shared/logger";
 import { assertAuthConfiguration, authenticate, authorize } from "@bus-ai/shared/auth";
 import * as tripRepository from "./repository.js";
 import { createTripService } from "./services/trip-service.js";
@@ -13,7 +14,10 @@ import { createTripController } from "./controllers/trip-controller.js";
 import { createTripRouter } from "./routes/trip-routes.js";
 import { createHealthCheck } from "./health.js";
 
+const logger = createLogger("trip-service");
+registerProcessErrorHandlers(logger);
 const app = express();
+app.use(requestLoggingMiddleware(logger));
 app.use(cors());
 app.use(express.json());
 assertAuthConfiguration();
@@ -90,7 +94,7 @@ await bindGrpcServer(grpcServer, process.env.TRIP_GRPC_BIND || "0.0.0.0:50052", 
 
 const port = Number(process.env.PORT || 4010);
 const httpServer = app.listen(port, () => {
-  console.log(`[trip-service] listening on http://localhost:${port}`);
+  logger.info("service_started", { port });
 });
 
 let shuttingDown = false;

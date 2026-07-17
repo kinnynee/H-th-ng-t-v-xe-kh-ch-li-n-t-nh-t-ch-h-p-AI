@@ -67,3 +67,33 @@ test("suspended trips are hidden from customers but visible to admin searches", 
   assert.equal(customerSearch.trips.some((item) => item.id === trip.id), false);
   assert.equal(adminSearch.trips.some((item) => item.id === trip.id && item.status === "SUSPENDED"), true);
 });
+
+test("admin can configure vehicle seat positions and a trip's expected arrival", async () => {
+  const { service } = serviceFixture();
+  const vehicle = await service.createVehicle({
+    plate: "51B-999.01",
+    type: "Demo 2-2",
+    seatCount: 4,
+    layout: "2-2",
+    seatLayout: [
+      { id: "L01", floor: 1, row: 1, column: 1 },
+      { id: "L02", floor: 1, row: 1, column: 2 },
+      { id: "R01", floor: 1, row: 1, column: 4 },
+      { id: "R02", floor: 1, row: 1, column: 5 }
+    ]
+  });
+  assert.equal(vehicle.seatLayout[3].column, 5);
+
+  const trip = await service.saveTrip(null, {
+    routeId: routes[0].id,
+    operatorId: operators[0].id,
+    vehicleId: vehicle.id,
+    departureTime: "2026-07-20T08:00:00+07:00",
+    arrivalTime: "2026-07-20T12:45:00+07:00",
+    price: 210000,
+    status: "ACTIVE"
+  });
+  assert.equal(trip.arrivalTime, "2026-07-20T12:45:00+07:00");
+  assert.equal(trip.durationMinutes, 285);
+  assert.deepEqual(trip.seatLayout.map((seat) => seat.id), ["L01", "L02", "R01", "R02"]);
+});

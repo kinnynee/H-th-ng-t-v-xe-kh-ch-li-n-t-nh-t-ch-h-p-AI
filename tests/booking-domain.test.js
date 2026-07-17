@@ -36,11 +36,11 @@ test("one ticket can check in without checking in the whole booking", () => {
   const booking = {
     code: "BKTEST", status: "TICKET_ISSUED", updatedAt: "",
     tickets: [
-      { id: "BKTEST-A01", status: "ISSUED" },
+      { id: "BKTEST-A01", qrPayload: "BKTEST-TICKET-A01", status: "ISSUED" },
       { id: "BKTEST-A02", status: "ISSUED" }
     ]
   };
-  checkInTickets(booking, "BKTEST-A01", new Date("2026-07-17T00:00:00Z"));
+  checkInTickets(booking, "BKTEST-TICKET-A01", new Date("2026-07-17T00:00:00Z"));
   assert.equal(booking.status, "PARTIALLY_CHECKED_IN");
   assert.equal(booking.tickets[0].status, "CHECKED_IN");
   assert.equal(booking.tickets[1].status, "ISSUED");

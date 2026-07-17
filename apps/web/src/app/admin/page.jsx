@@ -5,13 +5,82 @@ import { BarChart3, BusFront, CalendarDays, CheckCircle2, LayoutDashboard, Lock,
 import SiteChrome from "../../components/SiteChrome";
 import { gql, money, shortDateTime, todayISO } from "../../lib/graphql";
 
+function generatedSeatLayoutText(seatCount, layout) {
+  const count = Math.max(1, Number(seatCount) || 1);
+  const sleeper = /upper|lower|sleeper|giường|giuong/i.test(String(layout));
+  const floors = sleeper ? 2 : 1;
+  const perFloor = Math.ceil(count / floors);
+  const columns = /2\s*[-x]\s*2/.test(String(layout)) ? [1, 2, 4, 5] : [1, 3];
+  const lines = [];
+  for (let floor = 1; floor <= floors; floor += 1) {
+    if (floor > 1) lines.push("---");
+    const start = (floor - 1) * perFloor;
+    const end = Math.min(count, start + perFloor);
+    for (let index = start; index < end; index += columns.length) {
+      const row = Array.from({ length: Math.max(...columns) }, () => "-");
+      for (let offset = 0; offset < columns.length && index + offset < end; offset += 1) {
+        const prefix = floors === 1 ? "A" : (floor === 1 ? "A" : "B");
+        row[columns[offset] - 1] = `${prefix}${String(index + offset - start + 1).padStart(2, "0")}`;
+      }
+      lines.push(row.join(","));
+    }
+  }
+  return lines.join("\n");
+}
+
+function parseSeatLayout(text) {
+  const ids = new Set();
+  const seats = [];
+  let floor = 1;
+  let row = 0;
+  for (const sourceLine of String(text ?? "").split(/\r?\n/)) {
+    const line = sourceLine.trim();
+    if (!line) continue;
+    if (/^-{3,}$/.test(line)) {
+      floor += 1;
+      row = 0;
+      continue;
+    }
+    row += 1;
+    line.split(",").forEach((raw, index) => {
+      const id = raw.trim().toUpperCase();
+      if (!id || id === "-") return;
+      if (!/^[A-Z0-9][A-Z0-9_-]*$/.test(id)) throw new Error(`Mã ghế "${id}" không hợp lệ.`);
+      if (ids.has(id)) throw new Error(`Mã ghế "${id}" bị lặp.`);
+      ids.add(id);
+      seats.push({ id, label: id, floor, row, column: index + 1 });
+    });
+  }
+  if (!seats.length) throw new Error("Sơ đồ ghế phải có ít nhất một ghế.");
+  return seats;
+}
+
+function seatLayoutText(vehicle) {
+  const layout = vehicle?.seatLayout;
+  if (!Array.isArray(layout) || !layout.length) return generatedSeatLayoutText(vehicle?.seatCount, vehicle?.layout);
+  const lines = [];
+  for (const floor of [...new Set(layout.map((seat) => Number(seat.floor) || 1))].sort((a, b) => a - b)) {
+    if (lines.length) lines.push("---");
+    const floorSeats = layout.filter((seat) => Number(seat.floor) === floor);
+    const rows = [...new Set(floorSeats.map((seat) => Number(seat.row) || 1))].sort((a, b) => a - b);
+    for (const row of rows) {
+      const rowSeats = floorSeats.filter((seat) => Number(seat.row) === row);
+      const maxColumn = Math.max(...rowSeats.map((seat) => Number(seat.column) || 1));
+      const cells = Array.from({ length: maxColumn }, () => "-");
+      for (const seat of rowSeats) cells[(Number(seat.column) || 1) - 1] = seat.id;
+      lines.push(cells.join(","));
+    }
+  }
+  return lines.join("\n");
+}
+
 const ADMIN = `
 query Admin($input: SearchTripsInput!) {
-  catalog { operators { id name hotline } vehicles { id plate type seatCount layout } }
+  catalog { operators { id name hotline } vehicles { id plate type seatCount layout seatLayout { id label floor row column } } }
   stops { id city name }
   routes { id from to distanceKm durationMinutes pickup dropoff cancellationPolicy }
   searchTrips(input: $input) {
-    trips { id routeId from to operatorName busType departureTime price status availableSeats }
+    trips { id routeId operatorId vehicleId from to operatorName busType departureTime arrivalTime durationMinutes price status availableSeats }
   }
   adminSummary {
     eventCount
@@ -25,24 +94,9 @@ query Admin($input: SearchTripsInput!) {
 const LOGIN = `
 mutation Login($email: String!, $password: String!) {
   adminLogin(email: $email, password: $password) {
-    user { id email role name }
     accessToken
+    user { id email role name }
   }
-}`;
-
-const CREATE_STOP = `
-mutation CreateStop($input: StopInput!) {
-  createStop(input: $input) { id city name }
-}`;
-
-const UPDATE_STOP = `
-mutation UpdateStop($id: ID!, $input: StopInput!) {
-  updateStop(id: $id, input: $input) { id city name }
-}`;
-
-const DELETE_STOP = `
-mutation DeleteStop($id: ID!) {
-  deleteStop(id: $id)
 }`;
 
 const CREATE_ROUTE = `
@@ -60,14 +114,29 @@ mutation DeleteRoute($id: ID!) {
   deleteRoute(id: $id)
 }`;
 
+const CREATE_STOP = `
+mutation CreateStop($input: StopInput!) {
+  createStop(input: $input) { id city name }
+}`;
+
+const UPDATE_STOP = `
+mutation UpdateStop($id: ID!, $input: StopInput!) {
+  updateStop(id: $id, input: $input) { id city name }
+}`;
+
+const DELETE_STOP = `
+mutation DeleteStop($id: ID!) {
+  deleteStop(id: $id)
+}`;
+
 const CREATE_TRIP = `
 mutation CreateTrip($input: TripInput!) {
-  createTrip(input: $input) { id from to departureTime price status }
+  createTrip(input: $input) { id from to departureTime arrivalTime durationMinutes price status }
 }`;
 
 const UPDATE_TRIP = `
 mutation UpdateTrip($id: ID!, $input: TripInput!) {
-  updateTrip(id: $id, input: $input) { id from to departureTime price status }
+  updateTrip(id: $id, input: $input) { id from to departureTime arrivalTime durationMinutes price status }
 }`;
 
 const DELETE_TRIP = `
@@ -77,12 +146,12 @@ mutation DeleteTrip($id: ID!) {
 
 const CREATE_VEHICLE = `
 mutation CreateVehicle($input: VehicleInput!) {
-  createVehicle(input: $input) { id plate type seatCount layout }
+  createVehicle(input: $input) { id plate type seatCount layout seatLayout { id label floor row column } }
 }`;
 
 const UPDATE_VEHICLE = `
 mutation UpdateVehicle($id: ID!, $input: VehicleInput!) {
-  updateVehicle(id: $id, input: $input) { id plate type seatCount layout }
+  updateVehicle(id: $id, input: $input) { id plate type seatCount layout seatLayout { id label floor row column } }
 }`;
 
 const DELETE_VEHICLE = `
@@ -135,6 +204,7 @@ export default function AdminPage() {
     operatorId: "",
     vehicleId: "",
     departureTime: `${todayISO(1)}T09:00:00+07:00`,
+    arrivalTime: "",
     price: 180000,
     status: "ACTIVE"
   });
@@ -143,7 +213,8 @@ export default function AdminPage() {
     plate: "51B-999.99",
     type: "Limousine 22 chỗ",
     seatCount: 22,
-    layout: "premium"
+    layout: "premium",
+    seatLayoutText: generatedSeatLayoutText(22, "premium")
   });
   const [stopForm, setStopForm] = useState({ id: "", city: "TP.HCM", name: "Bến xe Miền Đông mới" });
   const [ops, setOps] = useState({ tripId: "", seatIds: "A01", codeOrTicket: "" });
@@ -304,10 +375,17 @@ export default function AdminPage() {
     if (!tripForm.departureTime) {
       return setMessage("Lỗi: Vui lòng nhập thời gian khởi hành.");
     }
+    if (tripForm.arrivalTime && Date.parse(tripForm.arrivalTime) <= Date.parse(tripForm.departureTime)) {
+      return setMessage("Lỗi: Giờ đến dự kiến phải sau giờ khởi hành.");
+    }
     setIsLoading(true);
     try {
       const { id, ...tripInput } = tripForm;
-      const input = { ...tripInput, price: Number(tripForm.price) };
+      const input = {
+        ...tripInput,
+        arrivalTime: tripForm.arrivalTime.trim() || undefined,
+        price: Number(tripForm.price)
+      };
       const result = id ? await gql(UPDATE_TRIP, { id, input }) : await gql(CREATE_TRIP, { input });
     const trip = id ? result.updateTrip : result.createTrip;
     setTripForm((current) => ({ ...current, id: "" }));
@@ -338,13 +416,33 @@ export default function AdminPage() {
     await load();
   }
 
+  async function saveStop() {
+    const { id, ...input } = stopForm;
+    const result = id ? await gql(UPDATE_STOP, { id, input }) : await gql(CREATE_STOP, { input });
+    const stop = id ? result.updateStop : result.createStop;
+    setStopForm({ id: "", city: stop.city, name: "" });
+    setMessage(`Đã lưu điểm dừng ${stop.name}`);
+    await load();
+  }
+
+  function editStop(stop) {
+    setStopForm({ id: stop.id, city: stop.city, name: stop.name });
+  }
+
+  async function deleteStop(id) {
+    await gql(DELETE_STOP, { id });
+    setMessage("Đã xóa điểm dừng.");
+    await load();
+  }
+
   function editTrip(trip) {
     setTripForm({
       id: trip.id,
       routeId: trip.routeId,
-      operatorId: data.catalog.operators.find((operator) => operator.name === trip.operatorName)?.id || data.catalog.operators[0]?.id || "",
-      vehicleId: data.catalog.vehicles.find((vehicle) => vehicle.type === trip.busType)?.id || data.catalog.vehicles[0]?.id || "",
+      operatorId: trip.operatorId || data.catalog.operators[0]?.id || "",
+      vehicleId: trip.vehicleId || data.catalog.vehicles[0]?.id || "",
       departureTime: trip.departureTime,
+      arrivalTime: trip.arrivalTime,
       price: trip.price,
       status: trip.status
     });
@@ -365,13 +463,26 @@ export default function AdminPage() {
     }
     setIsLoading(true);
     try {
-      const input = { ...vehicleForm, seatCount: Number(vehicleForm.seatCount) };
+      const seatLayout = parseSeatLayout(vehicleForm.seatLayoutText);
+      if (seatLayout.length !== Number(vehicleForm.seatCount)) {
+        setIsLoading(false);
+        return setMessage(`Lỗi: Sơ đồ có ${seatLayout.length} ghế, chưa khớp số ghế đã nhập.`);
+      }
+      const { id, seatLayoutText: _seatLayoutText, ...vehicleInput } = vehicleForm;
+      const input = { ...vehicleInput, seatCount: Number(vehicleForm.seatCount), seatLayout };
       const result = vehicleForm.id
-        ? await gql(UPDATE_VEHICLE, { id: vehicleForm.id, input })
+        ? await gql(UPDATE_VEHICLE, { id, input })
         : await gql(CREATE_VEHICLE, { input });
     const vehicle = vehicleForm.id ? result.updateVehicle : result.createVehicle;
     setMessage(`Đã lưu xe ${vehicle.plate}`);
-    setVehicleForm({ id: "", plate: "51B-999.99", type: "Limousine 22 chỗ", seatCount: 22, layout: "premium" });
+    setVehicleForm({
+      id: "",
+      plate: "51B-999.99",
+      type: "Limousine 22 chỗ",
+      seatCount: 22,
+      layout: "premium",
+      seatLayoutText: generatedSeatLayoutText(22, "premium")
+    });
     await load();
     } catch (err) {
       setMessage(`Lỗi: ${err.message}`);
@@ -385,7 +496,8 @@ export default function AdminPage() {
       plate: vehicle.plate,
       type: vehicle.type,
       seatCount: vehicle.seatCount,
-      layout: vehicle.layout
+      layout: vehicle.layout,
+      seatLayoutText: seatLayoutText(vehicle)
     });
   }
 
@@ -399,6 +511,10 @@ export default function AdminPage() {
     await gql(STATUS, { id, status });
     setMessage(`Đã chuyển ${id} sang ${status}`);
     await load();
+  }
+
+  function nextTripStatus(status) {
+    return { ACTIVE: "DEPARTED", DEPARTED: "COMPLETED", COMPLETED: "ACTIVE" }[status] || "ACTIVE";
   }
 
   async function blockSeats(blocked) {
@@ -630,9 +746,42 @@ export default function AdminPage() {
 
               <div className="panel admin-section-panel admin-section-trips">
                 <div className="panel-header">
-                  <span className="panel-kicker">LỊCH CHẠY</span>
-                  <h2>{tripForm.id ? "Chỉnh sửa chuyến" : "Tạo chuyến mới"}</h2>
-                  <p>Chọn tuyến, phương tiện, thời gian và mức giá bán.</p>
+                  <h2>CRUD điểm dừng</h2>
+                  <p>Điểm dừng được dùng cho autocomplete và cấu hình tuyến.</p>
+                </div>
+                <div className="panel-body form-grid">
+                  <div className="two-cols">
+                    <input className="input" value={stopForm.city} onChange={(event) => setStopForm((current) => ({ ...current, city: event.target.value }))} placeholder="Tỉnh/thành" />
+                    <input className="input" value={stopForm.name} onChange={(event) => setStopForm((current) => ({ ...current, name: event.target.value }))} placeholder="Tên điểm dừng" />
+                  </div>
+                  <button className="primary-button" onClick={saveStop}>
+                    <Plus size={18} /> {stopForm.id ? "Cập nhật điểm dừng" : "Tạo điểm dừng"}
+                  </button>
+                  <table className="table">
+                    <thead>
+                      <tr><th>Tỉnh/thành</th><th>Điểm dừng</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                      {data.stops.map((stop) => (
+                        <tr key={stop.id}>
+                          <td>{stop.city}</td>
+                          <td>{stop.name}</td>
+                          <td>
+                            <button className="ghost-button" onClick={() => editStop(stop)}>Sửa</button>
+                            <button className="ghost-button" onClick={() => deleteStop(stop.id)}>
+                              <Trash2 size={16} /> Xóa
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="panel">
+                <div className="panel-header">
+                  <h2>Tạo chuyến</h2>
                 </div>
                 <div className="panel-body form-grid">
                   <select className="select" aria-label="Tuyến xe" value={tripForm.routeId} onChange={(event) => setTripForm((current) => ({ ...current, routeId: event.target.value }))}>
@@ -651,7 +800,14 @@ export default function AdminPage() {
                     ))}
                   </select>
                   <input className="input" aria-label="Thời gian khởi hành" value={tripForm.departureTime} onChange={(event) => setTripForm((current) => ({ ...current, departureTime: event.target.value }))} />
+                  <input className="input" aria-label="Giờ đến dự kiến" value={tripForm.arrivalTime} onChange={(event) => setTripForm((current) => ({ ...current, arrivalTime: event.target.value }))} placeholder="Giờ đến dự kiến (ISO, ví dụ 2026-07-20T15:30:00+07:00)" />
                   <input className="input" aria-label="Giá vé" placeholder="Giá vé" type="number" value={tripForm.price} onChange={(event) => setTripForm((current) => ({ ...current, price: event.target.value }))} />
+                  <select className="select" value={tripForm.status} onChange={(event) => setTripForm((current) => ({ ...current, status: event.target.value }))}>
+                    <option value="ACTIVE">Đang bán (ACTIVE)</option>
+                    <option value="SUSPENDED">Tạm ngừng (SUSPENDED)</option>
+                    <option value="DEPARTED">Đã khởi hành (DEPARTED)</option>
+                    <option value="COMPLETED">Đã hoàn thành (COMPLETED)</option>
+                  </select>
                   <button className="primary-button" onClick={createTrip} disabled={isLoading}>
                     <Save size={18} /> {tripForm.id ? "Cập nhật chuyến" : "Lưu chuyến"}
                   </button>
@@ -672,6 +828,19 @@ export default function AdminPage() {
                   <div className="two-cols">
                     <input className="input" type="number" value={vehicleForm.seatCount} onChange={(event) => setVehicleForm((current) => ({ ...current, seatCount: event.target.value }))} placeholder="Số ghế" />
                     <input className="input" value={vehicleForm.layout} onChange={(event) => setVehicleForm((current) => ({ ...current, layout: event.target.value }))} placeholder="Layout" />
+                  </div>
+                  <div className="seat-layout-config">
+                    <div className="meta-row">
+                      <strong>Sơ đồ ghế chi tiết</strong>
+                      <button className="ghost-button" type="button" onClick={() => setVehicleForm((current) => ({
+                        ...current,
+                        seatLayoutText: generatedSeatLayoutText(current.seatCount, current.layout)
+                      }))}>
+                        Tạo sơ đồ mẫu
+                      </button>
+                    </div>
+                    <p>Nhập từng hàng, ngăn cột bằng dấu phẩy; dùng <code>-</code> cho lối đi và <code>---</code> để ngăn tầng.</p>
+                    <textarea className="textarea seat-layout-input" value={vehicleForm.seatLayoutText} onChange={(event) => setVehicleForm((current) => ({ ...current, seatLayoutText: event.target.value }))} aria-label="Sơ đồ ghế chi tiết" />
                   </div>
                   <button className="primary-button" onClick={saveVehicle} disabled={isLoading}>
                     <BusFront size={18} /> {vehicleForm.id ? "Cập nhật xe" : "Tạo xe"}
@@ -728,7 +897,7 @@ export default function AdminPage() {
                       </div>
                     </>
                   )}
-                  <input className="input" value={ops.codeOrTicket} onChange={(event) => setOps((current) => ({ ...current, codeOrTicket: event.target.value }))} placeholder="Mã booking hoặc mã vé" />
+                  <input className="input" value={ops.codeOrTicket} onChange={(event) => setOps((current) => ({ ...current, codeOrTicket: event.target.value }))} placeholder="Quét mã QR, mã booking hoặc mã vé" />
                   <button className="primary-button" onClick={checkIn} disabled={isLoading}>
                     <CheckCircle2 size={18} /> Check-in
                   </button>

@@ -39,7 +39,7 @@ async function saveState() {
 
 export async function recordSearch(route) {
   state.searches++;
-  
+
   if (route) {
     if (!state.popularRoutes[route]) {
       state.popularRoutes[route] = { searches: 0, tickets: 0 };
@@ -55,15 +55,15 @@ export async function recordBookingAttempt() {
 
 export async function recordPaymentSuccess(booking) {
   state.bookings++;
-  
+
   const paymentDate = String(booking.paidAt ?? "").slice(0, 10) || isoDate(0);
   if (!state.revenueByDay[paymentDate]) {
     state.revenueByDay[paymentDate] = { revenue: 0, tickets: 0 };
   }
-  
+
   state.revenueByDay[paymentDate].revenue += booking.totalAmount || 0;
   state.revenueByDay[paymentDate].tickets += booking.passengers?.length || 1;
-  
+
   const route = booking.routeName;
   if (route) {
     if (!state.popularRoutes[route]) {
@@ -71,7 +71,7 @@ export async function recordPaymentSuccess(booking) {
     }
     state.popularRoutes[route].tickets += booking.passengers?.length || 1;
   }
-  
+
   await saveState();
 }
 
@@ -119,7 +119,7 @@ export function getSummary() {
     revenue: data.revenue,
     tickets: data.tickets
   }));
-  
+
   const popularRoutes = Object.entries(state.popularRoutes)
     .map(([route, data]) => ({
       route,
@@ -128,9 +128,9 @@ export function getSummary() {
     }))
     .sort((a, b) => b.searches - a.searches)
     .slice(0, 10);
-    
+
   const conversionRate = state.searches > 0 ? (state.bookings / state.searches) : 0;
-  
+
   return {
     revenueByDay,
     popularRoutes,

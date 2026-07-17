@@ -117,6 +117,31 @@ test("uses a persisted seat catalog when one is provided", async () => {
   assert.deepEqual(map.seats.map((seat) => seat.status), ["AVAILABLE", "AVAILABLE"]);
 });
 
+test("retries a confirmed booking idempotently after its hold was consumed", async () => {
+  const inventory = createSeatInventory({ cache: createMemoryTTLStore() });
+  const tripId = "trip-hcm-dalat-early";
+  const hold = await inventory.holdSeats({
+    tripId,
+    seatIds: ["A05"],
+    customerEmail: "buyer@example.com",
+    idempotencyKey: "retryable-hold",
+    ttlSeconds: 300
+  });
+
+  assert.equal((await inventory.confirmSeats({
+    tripId,
+    seatIds: ["A05"],
+    holdToken: hold.holdToken,
+    bookingCode: "BK-RETRY"
+  })).ok, true);
+  assert.equal((await inventory.confirmSeats({
+    tripId,
+    seatIds: ["A05"],
+    holdToken: hold.holdToken,
+    bookingCode: "BK-RETRY"
+  })).ok, true);
+});
+
 test("new trips receive the requested inventory and holds are verified", async () => {
   const persisted = [];
   const inventory = createSeatInventory({
@@ -137,6 +162,26 @@ test("new trips receive the requested inventory and holds are verified", async (
   assert.equal((await inventory.verifyHold({
     tripId: "trip-new", seatIds: ["A01"], holdToken: hold.holdToken, customerEmail: "other@example.com"
   })).ok, false);
+});
+
+test("new trip inventory preserves the vehicle's configured seat positions", async () => {
+  const inventory = createSeatInventory({ cache: createMemoryTTLStore(), trips: [] });
+  const map = await inventory.ensureTripInventory({
+    tripId: "trip-custom-layout",
+    seatCount: 4,
+    seats: [
+      { id: "L01", label: "L01", floor: 1, row: 1, column: 1 },
+      { id: "L02", label: "L02", floor: 1, row: 1, column: 2 },
+      { id: "R01", label: "R01", floor: 1, row: 1, column: 4 },
+      { id: "R02", label: "R02", floor: 1, row: 1, column: 5 }
+    ]
+  });
+  assert.deepEqual(map.seats.map(({ id, row, column }) => ({ id, row, column })), [
+    { id: "L01", row: 1, column: 1 },
+    { id: "L02", row: 1, column: 2 },
+    { id: "R01", row: 1, column: 4 },
+    { id: "R02", row: 1, column: 5 }
+  ]);
 });
 
 test("booking creation can atomically extend every owned seat hold", async () => {
@@ -168,4 +213,28 @@ test("booking creation can atomically extend every owned seat hold", async () =>
     ttlSeconds: 900
   });
   assert.equal(wrongOwner.ok, false);
+});
+
+test("does not alter local availability when durable confirmation rejects a race", async () => {
+  const inventory = createSeatInventory({
+    cache: createMemoryTTLStore(),
+    confirmAssignments: async () => ({ ok: false, message: "Seat was sold by another replica." })
+  });
+  const tripId = "trip-hcm-dalat-early";
+  const hold = await inventory.holdSeats({
+    tripId,
+    seatIds: ["A06"],
+    customerEmail: "buyer@example.com",
+    idempotencyKey: "rejected-confirmation",
+    ttlSeconds: 300
+  });
+
+  const result = await inventory.confirmSeats({
+    tripId,
+    seatIds: ["A06"],
+    holdToken: hold.holdToken,
+    bookingCode: "BK-CONFLICT"
+  });
+  assert.equal(result.ok, false);
+  assert.equal((await inventory.getSeatMap(tripId)).seats.find((seat) => seat.id === "A06").status, "HELD");
 });

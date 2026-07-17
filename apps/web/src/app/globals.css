@@ -1111,6 +1111,31 @@ button:disabled {
   border-radius: 14px;
 }
 
+.seat-layout-config {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  background: #fafcfc;
+}
+
+.seat-layout-config .meta-row {
+  justify-content: space-between;
+}
+
+.seat-layout-config p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.seat-layout-input {
+  min-height: 132px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  line-height: 1.5;
+}
+
 .seat-button {
   aspect-ratio: 1;
   border: 1px solid var(--line-strong);
@@ -1176,6 +1201,18 @@ button:disabled {
 
 .ticket-card p:last-child {
   margin-bottom: 0;
+}
+
+.ticket-qr-code {
+  display: block;
+  width: 160px;
+  height: 160px;
+  margin: 12px auto;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  image-rendering: pixelated;
 }
 
 .metrics {

@@ -22,15 +22,19 @@ function statusLabel(status) {
 }
 
 function seatGroups(seats, layout) {
-  const ordered = [...seats].sort((left, right) => left.label.localeCompare(right.label, "en"));
-  if (layout.kind !== "sleeper") return [{ id: "main", label: layout.label, seats: ordered }];
-  return [1, 2]
-    .map((floor) => ({
-      id: `floor-${floor}`,
-      label: floor === 1 ? "Tầng dưới" : "Tầng trên",
-      seats: ordered.filter((seat) => Number(seat.floor) === floor)
-    }))
-    .filter((group) => group.seats.length > 0);
+  const ordered = [...seats].sort((left, right) => (
+    Number(left.floor) - Number(right.floor)
+    || Number(left.row) - Number(right.row)
+    || Number(left.column) - Number(right.column)
+    || left.label.localeCompare(right.label, "en")
+  ));
+  const floors = [...new Set(ordered.map((seat) => Number(seat.floor) || 1))].sort((left, right) => left - right);
+  if (floors.length < 2) return [{ id: "main", label: layout.label, seats: ordered }];
+  return floors.map((floor) => ({
+    id: `floor-${floor}`,
+    label: floor === 1 ? "Tầng dưới" : `Tầng ${floor}`,
+    seats: ordered.filter((seat) => (Number(seat.floor) || 1) === floor)
+  }));
 }
 
 /** Visual seat layout while the service remains the source of truth for availability. */
@@ -52,7 +56,10 @@ export default function SeatMap({ busType, seats = [], selected = [], onToggle, 
         {groups.map((group) => (
           <section className="seat-layout__section" key={group.id} aria-label={group.label}>
             <h3>{group.label}</h3>
-            <div className={`seat-grid seat-grid--${layout.kind}`}>
+            <div
+              className={`seat-grid seat-grid--${layout.kind}`}
+              style={{ gridTemplateColumns: `repeat(${Math.max(...group.seats.map((seat) => Number(seat.column) || 1))}, minmax(42px, 76px))` }}
+            >
               {group.seats.map((seat, index) => {
                 const isSelected = selected.includes(seat.id);
                 const selectable = !disabled && (seat.status === "AVAILABLE" || isSelected);
@@ -64,7 +71,10 @@ export default function SeatMap({ busType, seats = [], selected = [], onToggle, 
                     disabled={!selectable}
                     aria-pressed={isSelected}
                     title={`${seat.label} — ${statusLabel(seat.status)}`}
-                    style={{ gridColumn: layout.pattern[index % layout.pattern.length] }}
+                    style={{
+                      gridColumn: Number(seat.column) || layout.pattern[index % layout.pattern.length],
+                      gridRow: Number(seat.row) || Math.floor(index / layout.pattern.length) + 1
+                    }}
                   >
                     {seat.label}
                   </button>

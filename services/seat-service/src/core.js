@@ -19,23 +19,21 @@ export function createSeatInventory({
   trips = buildTrips(),
   seatCatalog = new Map(),
   initialState = {},
+  loadState = null,
+  confirmAssignments = async () => ({ ok: true }),
+  releaseAssignments = async () => ({ ok: true }),
+  setAssignmentsBlocked = async () => ({ ok: true }),
   persistCatalog = async () => {},
-  persistState = async () => {},
   onSeatChanged = async () => {}
 } = {}) {
-  const booked = initialState.booked ?? new Map();
-  const blocked = initialState.blocked ?? new Set();
+  let booked = initialState.booked ?? new Map();
+  let blocked = initialState.blocked ?? new Set();
   const expiryTimers = new Map();
 
-  function expiryTimerKey(tripId, seatId) {
-    return `${tripId}:${seatId}`;
-  }
-
-  function clearSeatExpiryTimer(tripId, seatId) {
-    const key = expiryTimerKey(tripId, seatId);
-    const timer = expiryTimers.get(key);
-    if (timer) clearTimeout(timer);
-    expiryTimers.delete(key);
+  async function refreshState() {
+    const state = loadState ? await loadState() : { booked, blocked };
+    if (state?.booked) booked = state.booked;
+    if (state?.blocked) blocked = state.blocked;
   }
 
   function seatsForTrip(tripId) {
@@ -45,11 +43,39 @@ export function createSeatInventory({
     return buildSeatLabels(trip.seatCount);
   }
 
-  async function getSeatMap(tripId) {
-    const labels = seatsForTrip(tripId);
-    const seats = [];
+  function normalizeSeatLayout(seats, seatCount) {
+    const source = Array.isArray(seats) && seats.length ? seats : buildSeatLabels(seatCount);
+    if (source.length !== seatCount) {
+      throw new Error(`Trip seat layout has ${source.length} seats; expected ${seatCount}`);
+    }
+    const ids = new Set();
+    return source.map((seat, index) => {
+      const id = normalizeSeatId(seat.id);
+      const floor = Number(seat.floor ?? 1);
+      const row = Number(seat.row ?? Math.floor(index / 4) + 1);
+      const column = Number(seat.column ?? (index % 4) + 1);
+      if (!id || ids.has(id)) throw new Error("Seat layout contains duplicate or empty seat IDs");
+      if (![floor, row, column].every((value) => Number.isInteger(value) && value > 0)) {
+        throw new Error(`Seat ${id} has an invalid position`);
+      }
+      ids.add(id);
+      return { id, label: String(seat.label ?? id).trim() || id, floor, row, column };
+    });
+  }
 
-    for (const seat of labels) {
+  function clearSeatExpiryTimer(tripId, seatId) {
+    const key = stateKey(tripId, seatId);
+    const timer = expiryTimers.get(key);
+    if (timer) clearTimeout(timer);
+    expiryTimers.delete(key);
+  }
+
+  async function getSeatMap(tripId) {
+    // The SQL assignment table is the durable authority. Refreshing it here
+    // prevents an API replica from returning a stale BOOKED/BLOCKED snapshot.
+    await refreshState();
+    const seats = [];
+    for (const seat of seatsForTrip(tripId)) {
       const key = stateKey(tripId, seat.id);
       const hold = await cache.get(holdKey(tripId, seat.id));
       const ttl = hold ? await cache.ttl(holdKey(tripId, seat.id)) : 0;
@@ -64,20 +90,19 @@ export function createSeatInventory({
         holdToken: status === "HELD" ? hold.holdToken : ""
       });
     }
-
     return { tripId, seats };
   }
 
-  async function ensureTripInventory({ tripId, seatCount }) {
+  async function ensureTripInventory({ tripId, seatCount, seats }) {
     const normalizedCount = Number(seatCount);
     if (!tripId || !Number.isInteger(normalizedCount) || normalizedCount < 1) {
       throw new Error("tripId and a positive seatCount are required");
     }
     const current = seatCatalog.get(tripId);
     if (!current?.length) {
-      const seats = buildSeatLabels(normalizedCount);
-      seatCatalog.set(tripId, seats);
-      await persistCatalog(tripId, seats);
+      const configuredSeats = normalizeSeatLayout(seats, normalizedCount);
+      seatCatalog.set(tripId, configuredSeats);
+      await persistCatalog(tripId, configuredSeats);
     } else if (current.length !== normalizedCount) {
       throw new Error(`Trip ${tripId} already has ${current.length} inventory seats; requested ${normalizedCount}`);
     }
@@ -89,7 +114,6 @@ export function createSeatInventory({
     try {
       await onSeatChanged({ ...seatMap, message });
     } catch (error) {
-      // Seat ownership must remain available even if the optional realtime bus is down.
       console.warn(`[seat-service] could not publish seat change: ${error.message}`);
     }
     return seatMap;
@@ -98,31 +122,29 @@ export function createSeatInventory({
   function scheduleSeatExpiry(tripId, seatId, holdToken, ttlSeconds) {
     clearSeatExpiryTimer(tripId, seatId);
     const timer = setTimeout(async () => {
-      expiryTimers.delete(expiryTimerKey(tripId, seatId));
+      expiryTimers.delete(stateKey(tripId, seatId));
       try {
-        const currentHold = await cache.get(holdKey(tripId, seatId));
-        if (currentHold?.holdToken && currentHold.holdToken !== holdToken) return;
-        if (currentHold?.holdToken === holdToken) {
-          // Redis can report a zero-second TTL immediately before deleting its key.
+        const hold = await cache.get(holdKey(tripId, seatId));
+        if (hold?.holdToken && hold.holdToken !== holdToken) return;
+        if (hold?.holdToken === holdToken) {
           const remaining = await cache.ttl(holdKey(tripId, seatId));
           scheduleSeatExpiry(tripId, seatId, holdToken, Math.max(1, remaining));
           return;
         }
-        await emitSeatChanged(tripId, "Thời gian giữ ghế đã hết hạn; ghế đã có thể đặt lại.");
+        await emitSeatChanged(tripId, "Seat hold has expired.");
       } catch (error) {
         console.warn(`[seat-service] could not process hold expiry: ${error.message}`);
       }
     }, Math.max(50, Number(ttlSeconds) * 1000 + 100));
-    // Timers are only a notification aid; Redis remains the source of truth for expiry.
     timer.unref?.();
-    expiryTimers.set(expiryTimerKey(tripId, seatId), timer);
+    expiryTimers.set(stateKey(tripId, seatId), timer);
   }
 
   async function holdSeats({ tripId, seatIds, customerEmail, idempotencyKey, ttlSeconds = 300 }) {
     const normalizedSeats = [...new Set(seatIds.map(normalizeSeatId).filter(Boolean))];
     const holdToken = idempotencyKey || randomUUID();
-    if (!tripId || normalizedSeats.length === 0) {
-      return { ok: false, message: "Thiếu tripId hoặc danh sách ghế.", holdToken: "", expiresIn: 0, seats: [] };
+    if (!tripId || !normalizedSeats.length) {
+      return { ok: false, message: "A trip and at least one seat are required.", holdToken: "", expiresIn: 0, seats: [] };
     }
 
     const map = await getSeatMap(tripId);
@@ -131,12 +153,12 @@ export function createSeatInventory({
     for (const seatId of normalizedSeats) {
       const key = stateKey(tripId, seatId);
       const existingHold = await cache.get(holdKey(tripId, seatId));
-      if (!knownSeats.has(seatId)) unavailable.push(`${seatId} không tồn tại`);
-      else if (blocked.has(key)) unavailable.push(`${seatId} đang bị khóa`);
-      else if (booked.has(key)) unavailable.push(`${seatId} đã được đặt`);
-      else if (existingHold && existingHold.holdToken !== holdToken) unavailable.push(`${seatId} đang được giữ`);
+      if (!knownSeats.has(seatId)) unavailable.push(`${seatId} does not exist`);
+      else if (blocked.has(key)) unavailable.push(`${seatId} is blocked`);
+      else if (booked.has(key)) unavailable.push(`${seatId} is booked`);
+      else if (existingHold && existingHold.holdToken !== holdToken) unavailable.push(`${seatId} is held`);
     }
-    if (unavailable.length > 0) {
+    if (unavailable.length) {
       return { ok: false, message: unavailable.join(", "), holdToken: "", expiresIn: 0, seats: map.seats };
     }
 
@@ -148,24 +170,18 @@ export function createSeatInventory({
         acquired.push(seatId);
         continue;
       }
-      const ok = await cache.setNX(
+      const acquiredNow = await cache.setNX(
         key,
         { tripId, seatId, customerEmail, holdToken, createdAt: new Date().toISOString() },
         ttlSeconds
       );
-      if (!ok) {
+      if (!acquiredNow) {
         for (const rollbackSeatId of acquired) {
           const rollback = await cache.get(holdKey(tripId, rollbackSeatId));
           if (rollback?.holdToken === holdToken) await cache.del(holdKey(tripId, rollbackSeatId));
         }
         const latest = await getSeatMap(tripId);
-        return {
-          ok: false,
-          message: `Ghế ${seatId} vừa được người khác giữ. Vui lòng chọn ghế khác.`,
-          holdToken: "",
-          expiresIn: 0,
-          seats: latest.seats
-        };
+        return { ok: false, message: `Seat ${seatId} was just held by another customer.`, holdToken: "", expiresIn: 0, seats: latest.seats };
       }
       acquired.push(seatId);
     }
@@ -175,14 +191,8 @@ export function createSeatInventory({
       (seatId) => latest.seats.find((seat) => seat.id === seatId)?.holdExpiresIn ?? ttlSeconds
     ));
     for (const seatId of normalizedSeats) scheduleSeatExpiry(tripId, seatId, holdToken, expiresIn);
-    await emitSeatChanged(tripId, "Đã giữ ghế tạm thời.", latest);
-    return {
-      ok: true,
-      message: "Đã giữ ghế tạm thời.",
-      holdToken,
-      expiresIn,
-      seats: latest.seats
-    };
+    await emitSeatChanged(tripId, "Seats are temporarily held.", latest);
+    return { ok: true, message: "Seats are temporarily held.", holdToken, expiresIn, seats: latest.seats };
   }
 
   async function verifyHold({ tripId, seatIds, holdToken, customerEmail }) {
@@ -221,29 +231,47 @@ export function createSeatInventory({
 
   async function confirmSeats({ tripId, seatIds, holdToken, bookingCode }) {
     const normalizedSeats = [...new Set(seatIds.map(normalizeSeatId).filter(Boolean))];
+    await refreshState();
     for (const seatId of normalizedSeats) {
       const key = stateKey(tripId, seatId);
+      const confirmed = booked.get(key);
       const hold = await cache.get(holdKey(tripId, seatId));
-      if (blocked.has(key)) return { ok: false, message: `${seatId} đang bị khóa`, seats: [] };
-      if (booked.has(key)) return { ok: false, message: `${seatId} đã được đặt`, seats: [] };
-      if (!hold || hold.holdToken !== holdToken) {
-        return { ok: false, message: `Phiên giữ ghế ${seatId} đã hết hạn hoặc không hợp lệ`, seats: [] };
+      if (blocked.has(key)) return { ok: false, message: `${seatId} is blocked`, seats: [] };
+      if (confirmed && confirmed.bookingCode !== bookingCode) return { ok: false, message: `${seatId} is booked`, seats: [] };
+      if (!confirmed && (!hold || hold.holdToken !== holdToken)) {
+        return { ok: false, message: `The hold for ${seatId} is expired or invalid`, seats: [] };
       }
     }
 
+    // The repository performs insert-or-conflict in one transaction; this is
+    // the final concurrency boundary, rather than the process-local maps.
+    const persisted = await confirmAssignments({ tripId, seatIds: normalizedSeats, bookingCode });
+    if (!persisted?.ok) {
+      await refreshState();
+      return { ok: false, message: persisted?.message ?? "Seat is no longer available.", seats: [] };
+    }
     for (const seatId of normalizedSeats) {
       booked.set(stateKey(tripId, seatId), { bookingCode, confirmedAt: new Date().toISOString() });
       await cache.del(holdKey(tripId, seatId));
       clearSeatExpiryTimer(tripId, seatId);
     }
-    await persistState({ booked, blocked });
+    await refreshState();
     const latest = await getSeatMap(tripId);
-    await emitSeatChanged(tripId, "Đã xác nhận ghế.", latest);
-    return { ok: true, message: "Đã xác nhận ghế.", seats: latest.seats };
+    await emitSeatChanged(tripId, "Seats have been confirmed.", latest);
+    return { ok: true, message: "Seats have been confirmed.", seats: latest.seats };
   }
 
   async function releaseSeats({ tripId, seatIds, holdToken }) {
     const normalizedSeats = [...new Set(seatIds.map(normalizeSeatId).filter(Boolean))];
+    await refreshState();
+    const persisted = await releaseAssignments({
+      tripId,
+      seatIds: normalizedSeats,
+      bookingCode: holdToken,
+      admin: holdToken === "ADMIN"
+    });
+    if (!persisted?.ok) return { ok: false, message: persisted?.message ?? "Could not release seats." };
+
     for (const seatId of normalizedSeats) {
       const key = stateKey(tripId, seatId);
       const hold = await cache.get(holdKey(tripId, seatId));
@@ -251,18 +279,22 @@ export function createSeatInventory({
         await cache.del(holdKey(tripId, seatId));
         clearSeatExpiryTimer(tripId, seatId);
       }
-      const booking = booked.get(key);
-      if (booking && (!holdToken || booking.bookingCode === holdToken || holdToken === "ADMIN")) {
-        booked.delete(key);
-      }
+      const confirmed = booked.get(key);
+      if (confirmed && (!holdToken || confirmed.bookingCode === holdToken || holdToken === "ADMIN")) booked.delete(key);
     }
-    await persistState({ booked, blocked });
-    await emitSeatChanged(tripId, "Đã giải phóng ghế.");
-    return { ok: true, message: "Đã giải phóng ghế." };
+    await refreshState();
+    await emitSeatChanged(tripId, "Seats have been released.");
+    return { ok: true, message: "Seats have been released." };
   }
 
   async function blockSeats({ tripId, seatIds, blocked: shouldBlock }) {
     const normalizedSeats = [...new Set(seatIds.map(normalizeSeatId).filter(Boolean))];
+    await refreshState();
+    const persisted = await setAssignmentsBlocked({ tripId, seatIds: normalizedSeats, blocked: shouldBlock });
+    if (!persisted?.ok) {
+      const latest = await getSeatMap(tripId);
+      return { ok: false, message: persisted?.message ?? "Could not update seat state.", seats: latest.seats };
+    }
     for (const seatId of normalizedSeats) {
       const key = stateKey(tripId, seatId);
       if (shouldBlock) {
@@ -273,10 +305,10 @@ export function createSeatInventory({
         blocked.delete(key);
       }
     }
-    await persistState({ booked, blocked });
+    await refreshState();
     const latest = await getSeatMap(tripId);
-    await emitSeatChanged(tripId, shouldBlock ? "Đã khóa ghế." : "Đã mở khóa ghế.", latest);
-    return { ok: true, message: shouldBlock ? "Đã khóa ghế." : "Đã mở khóa ghế.", seats: latest.seats };
+    await emitSeatChanged(tripId, shouldBlock ? "Seats have been blocked." : "Seats have been unblocked.", latest);
+    return { ok: true, message: shouldBlock ? "Seats have been blocked." : "Seats have been unblocked.", seats: latest.seats };
   }
 
   return {
@@ -288,6 +320,9 @@ export function createSeatInventory({
     confirmSeats,
     releaseSeats,
     blockSeats,
-    _debug: { booked, blocked }
+    _debug: {
+      get booked() { return booked; },
+      get blocked() { return blocked; }
+    }
   };
 }

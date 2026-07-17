@@ -154,6 +154,9 @@ export function buildTrips() {
     ["trip-hcm-cantho-late", "route-hcm-cantho", "kumhodemo", "SLEEP-34-02", d0, "17:30", 190000],
     ["trip-hcm-cantho-evening", "route-hcm-cantho", "kumhodemo", "LIMO-22-03", d1, "18:30", 220000],
     ["trip-hcm-cantho-next-morning", "route-hcm-cantho", "futademo", "BUS-29-01", d1, "07:15", 150000],
+    ["trip-hcm-cantho-day2-morning", "route-hcm-cantho", "thanhbuoidemo", "LIMO-22-03", d2, "08:00", 215000],
+    ["trip-hcm-cantho-day2-afternoon", "route-hcm-cantho", "futademo", "SLEEP-34-02", d2, "14:30", 195000],
+    ["trip-hcm-cantho-day3-morning", "route-hcm-cantho", "kumhodemo", "BUS-29-01", d3, "06:30", 155000],
 
     ["trip-dalat-hcm-morning", "route-dalat-hcm", "futademo", "SLEEP-34-02", d0, "08:00", 330000],
     ["trip-dalat-hcm-night", "route-dalat-hcm", "thanhbuoidemo", "LIMO-22-03", d0, "22:00", 420000],
@@ -205,13 +208,17 @@ export function buildTrips() {
 
 export function buildSeatLabels(seatCount = 34) {
   const seats = [];
+  const seatsPerFloor = Math.ceil(seatCount / 2);
   for (let i = 1; i <= seatCount; i += 1) {
-    const prefix = i <= Math.ceil(seatCount / 2) ? "A" : "B";
-    const number = prefix === "A" ? i : i - Math.ceil(seatCount / 2);
+    const prefix = i <= seatsPerFloor ? "A" : "B";
+    const number = prefix === "A" ? i : i - seatsPerFloor;
+    const indexOnFloor = number - 1;
     seats.push({
       id: `${prefix}${String(number).padStart(2, "0")}`,
       label: `${prefix}${String(number).padStart(2, "0")}`,
       floor: prefix === "A" ? 1 : 2,
+      row: Math.floor(indexOnFloor / 2) + 1,
+      column: indexOnFloor % 2 === 0 ? 1 : 3,
       status: "AVAILABLE",
       holdExpiresIn: 0
     });

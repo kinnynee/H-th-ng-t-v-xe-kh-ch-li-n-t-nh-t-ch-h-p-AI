@@ -12,7 +12,9 @@
     "./migrations": "./src/migrations.js",
     "./http": "./src/http.js",
     "./auth": "./src/auth.js",
-    "./grpc": "./src/grpc.js"
+    "./grpc": "./src/grpc.js",
+    "./logger": "./src/logger.js",
+    "./ticket": "./src/ticket.js"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.12.2",
@@ -20,6 +22,8 @@
     "amqplib": "^0.10.5",
     "kafkajs": "^2.2.4",
     "pg": "^8.22.0",
+    "pdfkit": "^0.17.2",
+    "qrcode": "^1.5.4",
     "redis": "^4.7.0"
   }
 }

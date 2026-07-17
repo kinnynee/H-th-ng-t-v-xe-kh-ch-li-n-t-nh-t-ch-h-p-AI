@@ -21,6 +21,68 @@ export function loadGrpcProto(fileName) {
   return grpc.loadPackageDefinition(protoLoader.loadSync(protoPath, loaderOptions));
 }
 
+function getServiceConstructor(proto, servicePath) {
+  const serviceConstructor = servicePath.split(".").reduce((value, segment) => value?.[segment], proto);
+  if (typeof serviceConstructor !== "function") {
+    throw new Error(`The gRPC service "${servicePath}" was not found in its proto definition`);
+  }
+  return serviceConstructor;
+}
+
+/**
+ * Creates one gRPC client from a repository proto file.
+ *
+ * @example
+ * const seatInventory = createGrpcClient({
+ *   protoFile: "seat_inventory.proto",
+ *   servicePath: "bus.seat.v1.SeatInventoryService",
+ *   target: "localhost:50051"
+ * });
+ */
+export function createGrpcClient({ protoFile, servicePath, target, credentials, options } = {}) {
+  if (typeof protoFile !== "string" || !protoFile) {
+    throw new Error("A gRPC client requires a protoFile");
+  }
+  if (typeof servicePath !== "string" || !servicePath) {
+    throw new Error("A gRPC client requires a servicePath");
+  }
+  if (typeof target !== "string" || !target) {
+    throw new Error("A gRPC client requires a target");
+  }
+
+  const ServiceClient = getServiceConstructor(loadGrpcProto(protoFile), servicePath);
+  return new ServiceClient(target, credentials ?? grpc.credentials.createInsecure(), options);
+}
+
+/**
+ * Creates a named collection of outbound gRPC clients. Call closeAll() during
+ * graceful shutdown so each client closes its underlying HTTP/2 connection.
+ */
+export function createGrpcClients(definitions = {}) {
+  if (!definitions || typeof definitions !== "object" || Array.isArray(definitions)) {
+    throw new Error("gRPC client definitions must be an object");
+  }
+
+  const grpcClients = Object.create(null);
+  const createdClients = [];
+  for (const [name, definition] of Object.entries(definitions)) {
+    if (!name || name === "closeAll") {
+      throw new Error(`"${name}" is not a valid gRPC client name`);
+    }
+    const client = createGrpcClient(definition);
+    grpcClients[name] = client;
+    createdClients.push(client);
+  }
+
+  Object.defineProperty(grpcClients, "closeAll", {
+    enumerable: false,
+    value: () => {
+      for (const client of createdClients) client.close();
+    }
+  });
+  return Object.freeze(grpcClients);
+}
+
 const routerProto = loadGrpcProto("service_router.proto");
 const healthProto = loadGrpcProto("health.proto");
 const routerService = routerProto.bus.platform.v1.ServiceRouter.service;

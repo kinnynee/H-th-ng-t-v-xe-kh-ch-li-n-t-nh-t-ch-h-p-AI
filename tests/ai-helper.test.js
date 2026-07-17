@@ -28,7 +28,7 @@ test("isTripSearchIntent() accurately identifies search intent", () => {
   assert.equal(isTripSearchIntent("mấy giờ có xe hcm cần thơ"), true);
   // Has route + relative day
   assert.equal(isTripSearchIntent("mai đi nha trang"), true);
-  
+
   // Missing route
   assert.equal(isTripSearchIntent("chuyến đi lúc mấy giờ"), false);
   // Missing intent keyword but has route (should be false, unless it has a day keyword)

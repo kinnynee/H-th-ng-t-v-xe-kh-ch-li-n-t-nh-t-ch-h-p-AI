@@ -60,7 +60,7 @@ export function assertCheckInWindow(departureTime, {
 }
 
 export function checkInTickets(booking, codeOrTicket, at = new Date()) {
-  const target = booking.tickets.find((ticket) => ticket.id === codeOrTicket);
+  const target = booking.tickets.find((ticket) => ticket.id === codeOrTicket || ticket.qrPayload === codeOrTicket);
   const selected = target ? [target] : booking.code === codeOrTicket ? booking.tickets : [];
   if (selected.length === 0) throw new Error("Booking or ticket not found");
   for (const ticket of selected) {

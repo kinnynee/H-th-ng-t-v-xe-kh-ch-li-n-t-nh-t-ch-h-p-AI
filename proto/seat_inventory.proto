@@ -24,6 +24,16 @@ message Seat {
   string status = 4;
   int32 hold_expires_in = 5;
   string hold_token = 6;
+  int32 row = 7;
+  int32 column = 8;
+}
+
+message SeatDefinition {
+  string id = 1;
+  string label = 2;
+  int32 floor = 3;
+  int32 row = 4;
+  int32 column = 5;
 }
 
 message GetSeatMapResponse {
@@ -34,6 +44,7 @@ message GetSeatMapResponse {
 message EnsureTripInventoryRequest {
   string trip_id = 1;
   int32 seat_count = 2;
+  repeated SeatDefinition seats = 3;
 }
 
 message HoldSeatsRequest {

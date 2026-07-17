@@ -14,7 +14,7 @@ query Booking($code: ID!, $email: String) {
     cancellationPolicy refundAmount cancellationFee ticketHtmlUrl ticketPdfUrl
     seatIds
     passengers { seatId fullName phone email documentId }
-    tickets { id passengerName seatId qrPayload issuedAt status checkedInAt }
+    tickets { id passengerName seatId qrPayload qrCodeDataUrl issuedAt status checkedInAt }
   }
 }`;
 
@@ -191,7 +191,8 @@ export default function BookingPage() {
                       </span>
                       <h3>{ticket.id}</h3>
                       <p>{ticket.passengerName}, ghế {ticket.seatId}</p>
-                      <p className="muted">QR mô phỏng: {ticket.qrPayload}</p>
+                      <img className="ticket-qr-code" src={ticket.qrCodeDataUrl} alt={`QR check-in ${ticket.id}`} width="160" height="160" />
+                      <p className="muted">Mã QR check-in: {ticket.qrPayload}</p>
                       <span className="badge status">{STATUS_LABELS[ticket.status] ?? ticket.status}</span>
                     </article>
                   ))}

@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { subscribeRabbit } from "@bus-ai/shared/broker";
+import { renderTicketHtml, renderTicketPdf } from "@bus-ai/shared/ticket";
 
 const dataDir = path.resolve(process.env.DATA_DIR || "../../data");
 
@@ -92,8 +93,8 @@ await subscribeRabbit("ticket-worker.booking-paid", ["booking.paid"], async (eve
   const booking = event.payload;
   const outDir = path.join(dataDir, "generated-tickets");
   await mkdir(outDir, { recursive: true });
-  await writeFile(path.join(outDir, `${booking.code}.html`), ticketHtml(booking), "utf8");
-  await writeFile(path.join(outDir, `${booking.code}.pdf`), simpleTicketPdf(booking), "utf8");
+  await writeFile(path.join(outDir, `${booking.code}.html`), await renderTicketHtml(booking), "utf8");
+  await writeFile(path.join(outDir, `${booking.code}.pdf`), await renderTicketPdf(booking));
   console.log(`[ticket-worker] generated ticket HTML/PDF for ${booking.code}`);
 });
 

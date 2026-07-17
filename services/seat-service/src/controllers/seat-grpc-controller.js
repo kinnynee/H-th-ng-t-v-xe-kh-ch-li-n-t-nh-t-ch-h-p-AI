@@ -24,7 +24,8 @@ export function createSeatGrpcController(inventory) {
     getSeatMap: invoke((request) => inventory.getSeatMap(request.tripId)),
     ensureTripInventory: invoke((request) => inventory.ensureTripInventory({
       tripId: request.tripId,
-      seatCount: request.seatCount
+      seatCount: request.seatCount,
+      seats: request.seats
     }), { serviceOnly: true }),
     holdSeats: invoke((request) => inventory.holdSeats({
       tripId: request.tripId,

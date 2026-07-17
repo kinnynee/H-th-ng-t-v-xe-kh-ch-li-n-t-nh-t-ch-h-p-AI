@@ -16,8 +16,8 @@ COPY workers/analytics-worker/package.json workers/analytics-worker/package.json
 COPY workers/ticket-worker/package.json workers/ticket-worker/package.json
 COPY workers/email-worker/package.json workers/email-worker/package.json
 
-RUN npm ci
+RUN npm install
 
 COPY . .
 
-EXPOSE 3000 4000 4010 4020 4050 4100 50051
+EXPOSE 3000 4000 4010 4020 4050 4100 50051 50052 50053 50054 50055
