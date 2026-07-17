@@ -9,6 +9,36 @@ x-app-build: &app-build
     - bus-network
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: bus_ticketing
+      POSTGRES_USER: bus
+      POSTGRES_PASSWORD: bus
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bus -d bus_ticketing"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - bus-network
+
+  db-setup:
+    <<: *app-build
+    restart: "no"
+    command: sh -c "npm run db:migrate && npm run db:seed"
+    environment:
+      DATABASE_URL: postgresql://bus:bus@postgres:5432/bus_ticketing
+      NODE_ENV: development
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -108,11 +138,14 @@ services:
     <<: *app-build
     command: npm run dev -w services/trip-service
     environment:
+      DATABASE_URL: postgresql://bus:bus@postgres:5432/bus_ticketing
       REDIS_URL: redis://redis:6379
       KAFKA_BROKERS: kafka:9092
     ports:
       - "4010:4010"
     depends_on:
+      db-setup:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       kafka:
@@ -127,11 +160,14 @@ services:
     <<: *app-build
     command: npm run dev -w services/seat-service
     environment:
+      DATABASE_URL: postgresql://bus:bus@postgres:5432/bus_ticketing
       REDIS_URL: redis://redis:6379
       SEAT_GRPC_BIND: 0.0.0.0:50051
     ports:
       - "50051:50051"
     depends_on:
+      db-setup:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
 
@@ -139,14 +175,18 @@ services:
     <<: *app-build
     command: npm run dev -w services/booking-service
     environment:
+      DATABASE_URL: postgresql://bus:bus@postgres:5432/bus_ticketing
       SEAT_GRPC_URL: seat-service:50051
       TRIP_SERVICE_URL: http://trip-service:4010
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       KAFKA_BROKERS: kafka:9092
-      PENDING_PAYMENT_TTL_SECONDS: 300
+      PENDING_PAYMENT_TTL_SECONDS: 900
+      GUEST_ACCESS_TTL_SECONDS: 1800
     ports:
       - "4020:4020"
     depends_on:
+      db-setup:
+        condition: service_completed_successfully
       seat-service:
         condition: service_started
       trip-service:
@@ -185,6 +225,9 @@ services:
     command: npm run dev -w workers/analytics-worker
     environment:
       KAFKA_BROKERS: kafka:9092
+      DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data
     ports:
       - "4050:4050"
     depends_on:
@@ -245,3 +288,6 @@ services:
 networks:
   bus-network:
     driver: bridge
+
+volumes:
+  postgres-data:

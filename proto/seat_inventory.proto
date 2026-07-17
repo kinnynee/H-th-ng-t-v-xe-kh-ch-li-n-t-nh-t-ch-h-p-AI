@@ -4,7 +4,10 @@ package bus.seat.v1;
 
 service SeatInventoryService {
   rpc GetSeatMap(GetSeatMapRequest) returns (GetSeatMapResponse);
+  rpc EnsureTripInventory(EnsureTripInventoryRequest) returns (GetSeatMapResponse);
   rpc HoldSeats(HoldSeatsRequest) returns (HoldSeatsResponse);
+  rpc VerifyHold(VerifyHoldRequest) returns (VerifyHoldResponse);
+  rpc ExtendHold(ExtendHoldRequest) returns (VerifyHoldResponse);
   rpc ConfirmSeats(ConfirmSeatsRequest) returns (ConfirmSeatsResponse);
   rpc ReleaseSeats(ReleaseSeatsRequest) returns (ReleaseSeatsResponse);
   rpc BlockSeats(BlockSeatsRequest) returns (BlockSeatsResponse);
@@ -28,6 +31,11 @@ message GetSeatMapResponse {
   repeated Seat seats = 2;
 }
 
+message EnsureTripInventoryRequest {
+  string trip_id = 1;
+  int32 seat_count = 2;
+}
+
 message HoldSeatsRequest {
   string trip_id = 1;
   repeated string seat_ids = 2;
@@ -42,6 +50,27 @@ message HoldSeatsResponse {
   string hold_token = 3;
   int32 expires_in = 4;
   repeated Seat seats = 5;
+}
+
+message VerifyHoldRequest {
+  string trip_id = 1;
+  repeated string seat_ids = 2;
+  string hold_token = 3;
+  string customer_email = 4;
+}
+
+message VerifyHoldResponse {
+  bool ok = 1;
+  string message = 2;
+  int32 expires_in = 3;
+}
+
+message ExtendHoldRequest {
+  string trip_id = 1;
+  repeated string seat_ids = 2;
+  string hold_token = 3;
+  string customer_email = 4;
+  int32 ttl_seconds = 5;
 }
 
 message ConfirmSeatsRequest {

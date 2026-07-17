@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { BarChart3, BusFront, CheckCircle2, Lock, LogIn, LogOut, MapPin, Plus, Save, Search, Trash2 } from "lucide-react";
+import { BarChart3, BusFront, CalendarDays, CheckCircle2, LayoutDashboard, Lock, LogIn, LogOut, MapPin, Plus, Route, Save, Search, Settings2, Trash2 } from "lucide-react";
 import SiteChrome from "../../components/SiteChrome";
 import { gql, money, shortDateTime, todayISO } from "../../lib/graphql";
 
@@ -115,6 +115,8 @@ mutation CheckIn($codeOrTicket: String!) {
 
 export default function AdminPage() {
   const [user, setUser] = useState(null);
+  const [accessState, setAccessState] = useState("checking");
+  const [activeSection, setActiveSection] = useState("overview");
   const [login, setLogin] = useState({ email: "admin@bus.local", password: "admin123" });
   const [data, setData] = useState(null);
   const [routeForm, setRouteForm] = useState({
@@ -171,14 +173,28 @@ export default function AdminPage() {
   useEffect(() => {
     const raw = localStorage.getItem("busAdminUser");
     const token = localStorage.getItem("busAccessToken");
-    if (!raw || !token) return;
+    if (!raw || !token) {
+      try {
+        const customer = JSON.parse(localStorage.getItem("busUser") ?? "null");
+        setAccessState(token && customer?.role === "CUSTOMER" ? "customer" : "anonymous");
+      } catch {
+        setAccessState("anonymous");
+      }
+      return;
+    }
     try {
       const stored = JSON.parse(raw);
-      if (!["ADMIN", "STAFF"].includes(stored.role)) return;
+      if (!["ADMIN", "STAFF"].includes(stored.role)) {
+        setAccessState("denied");
+        return;
+      }
       setUser(stored);
+      setAccessState("allowed");
+      setActiveSection(stored.role === "STAFF" ? "operations" : "overview");
       load().catch((err) => setMessage(`Lỗi: ${err.message}`));
     } catch {
       localStorage.removeItem("busAdminUser");
+      setAccessState("anonymous");
     }
   }, []);
 
@@ -190,6 +206,9 @@ export default function AdminPage() {
       localStorage.setItem("busAccessToken", result.adminLogin.accessToken);
       localStorage.setItem("busAdminUser", JSON.stringify(result.adminLogin.user));
       setUser(result.adminLogin.user);
+      setAccessState("allowed");
+      setActiveSection(result.adminLogin.user.role === "STAFF" ? "operations" : "overview");
+      window.dispatchEvent(new Event("bus-auth-changed"));
       setMessage(`Đăng nhập ${result.adminLogin.user.role}`);
       await load();
     } catch (err) {
@@ -202,7 +221,9 @@ export default function AdminPage() {
   function logout() {
     localStorage.removeItem("busAccessToken");
     localStorage.removeItem("busAdminUser");
+    window.dispatchEvent(new Event("bus-auth-changed"));
     setUser(null);
+    setAccessState("anonymous");
     setData(null);
     setTripBookings([]);
     setMessage("Đã đăng xuất.");
@@ -382,13 +403,36 @@ export default function AdminPage() {
 
   async function blockSeats(blocked) {
     const seatIds = ops.seatIds.split(",").map((item) => item.trim()).filter(Boolean);
-    const result = await gql(BLOCK, { tripId: ops.tripId, seatIds, blocked });
-    setMessage(result.blockSeats.message);
+    if (!ops.tripId || seatIds.length === 0) {
+      return setMessage("Lỗi: Vui lòng chọn chuyến và nhập ít nhất một mã ghế.");
+    }
+    setIsLoading(true);
+    try {
+      const result = await gql(BLOCK, { tripId: ops.tripId, seatIds, blocked });
+      setMessage(result.blockSeats.message);
+      await load();
+    } catch (err) {
+      setMessage(`Lỗi: ${err.message}`);
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   async function checkIn() {
-    const result = await gql(CHECKIN, { codeOrTicket: ops.codeOrTicket });
-    setMessage(`Check-in ${result.checkIn.code}: ${result.checkIn.status}`);
+    const codeOrTicket = ops.codeOrTicket.trim();
+    if (!codeOrTicket) return setMessage("Lỗi: Vui lòng nhập mã booking hoặc mã vé.");
+    setIsLoading(true);
+    setMessage("");
+    try {
+      const result = await gql(CHECKIN, { codeOrTicket });
+      setMessage(`Check-in ${result.checkIn.code}: ${result.checkIn.status}`);
+      setOps((current) => ({ ...current, codeOrTicket: "" }));
+      await load();
+    } catch (err) {
+      setMessage(`Lỗi: ${err.message}`);
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   async function loadTripBookings() {
@@ -401,15 +445,20 @@ export default function AdminPage() {
 
   return (
     <SiteChrome>
-      <main className="page stack">
-        <section className="section-title">
+      <main
+        className={`page stack ${user ? "admin-page" : "admin-auth-page"}`}
+        data-admin-section={activeSection}
+        data-admin-role={user?.role ?? "ANONYMOUS"}
+      >
+        <section className="section-title admin-title">
           <div>
-            <h1>Vận hành hệ thống</h1>
-            <p>{user ? `${user.name} - ${user.role}` : "Đăng nhập admin hoặc staff."}</p>
+            <span className="admin-eyebrow">BUS AI CONTROL CENTER</span>
+            <h1>Trung tâm điều hành</h1>
+            <p>{user ? `Xin chào ${user.name}. Theo dõi và xử lý vận hành tại một nơi.` : "Đăng nhập bằng tài khoản quản trị hoặc nhân viên vận hành."}</p>
           </div>
           <div className="meta-row">
-            <span className="badge">
-              <BarChart3 size={14} /> Analytics
+            <span className="badge admin-role-badge">
+              <BarChart3 size={14} /> {user?.role ?? "SECURE AREA"}
             </span>
             {user && (
               <button className="ghost-button" onClick={logout}>
@@ -419,8 +468,19 @@ export default function AdminPage() {
           </div>
         </section>
 
-        {!user && (
-          <section className="panel">
+        {accessState === "customer" && (
+          <section className="panel admin-login-card">
+            <div className="panel-body empty">
+              <Lock size={30} />
+              <strong>Không có quyền truy cập</strong>
+              <span>Tài khoản CUSTOMER không được vào khu vực quản trị.</span>
+              <a className="primary-button" href="/account">Quay lại tài khoản</a>
+            </div>
+          </section>
+        )}
+
+        {accessState === "anonymous" && (
+          <section className="panel admin-login-card">
             <div className="panel-body two-cols">
               <label className="field">
                 <span>Email</span>
@@ -440,8 +500,32 @@ export default function AdminPage() {
         {message && <div className="empty" style={{ color: message.startsWith("Lỗi") ? "var(--danger)" : "var(--success)", borderColor: message.startsWith("Lỗi") ? "var(--danger)" : "var(--success)" }}>{message}</div>}
         {isLoading && <div style={{ textAlign: "center", padding: "20px", color: "var(--muted)" }}>Đang tải dữ liệu...</div>}
 
-        {summary && (
-          <section className="metrics">
+        {user && data && (
+          <nav className="admin-tabs" aria-label="Khu vực quản trị">
+            {(user.role === "ADMIN" ? [
+              { id: "overview", label: "Tổng quan", icon: LayoutDashboard },
+              { id: "trips", label: "Chuyến xe", icon: CalendarDays },
+              { id: "network", label: "Tuyến & điểm dừng", icon: Route },
+              { id: "vehicles", label: "Phương tiện", icon: BusFront },
+              { id: "operations", label: "Vận hành", icon: Settings2 }
+            ] : [
+              { id: "operations", label: "Check-in", icon: CheckCircle2 }
+            ]).map(({ id, label, icon: Icon }) => (
+              <button
+                type="button"
+                className={`admin-tab ${activeSection === id ? "active" : ""}`}
+                aria-pressed={activeSection === id}
+                onClick={() => setActiveSection(id)}
+                key={id}
+              >
+                <Icon size={17} /> {label}
+              </button>
+            ))}
+          </nav>
+        )}
+
+        {summary && user?.role === "ADMIN" && (
+          <section className="metrics admin-section-panel admin-section-overview">
             <div className="metric-card">
               Doanh thu hôm nay
               <strong>{money(summary.revenueByDay.at(-1)?.revenue ?? 0)}</strong>
@@ -462,16 +546,18 @@ export default function AdminPage() {
         )}
 
         {user && data && (
-          <section className="split">
+          <section className="admin-workspace">
             <div className="stack" style={{ display: user.role === "ADMIN" ? undefined : "none" }}>
-              <div className="panel">
+              <div className="panel admin-section-panel admin-section-network">
                 <div className="panel-header">
-                  <h2>CRUD điểm dừng</h2>
+                  <span className="panel-kicker">MẠNG LƯỚI</span>
+                  <h2>Điểm đón và trả</h2>
+                  <p>Quản lý các bến xe và điểm dừng đang phục vụ.</p>
                 </div>
                 <div className="panel-body form-grid">
                   <div className="two-cols">
-                    <input className="input" value={stopForm.city} onChange={(event) => setStopForm((current) => ({ ...current, city: event.target.value }))} placeholder="Tỉnh/thành" />
-                    <input className="input" value={stopForm.name} onChange={(event) => setStopForm((current) => ({ ...current, name: event.target.value }))} placeholder="Tên bến/điểm dừng" />
+                    <input className="input" aria-label="Tỉnh hoặc thành phố" value={stopForm.city} onChange={(event) => setStopForm((current) => ({ ...current, city: event.target.value }))} placeholder="Tỉnh/thành" />
+                    <input className="input" aria-label="Tên bến hoặc điểm dừng" value={stopForm.name} onChange={(event) => setStopForm((current) => ({ ...current, name: event.target.value }))} placeholder="Tên bến/điểm dừng" />
                   </div>
                   <button className="primary-button" onClick={saveStop} disabled={isLoading}>
                     <MapPin size={18} /> {stopForm.id ? "Cập nhật điểm dừng" : "Tạo điểm dừng"}
@@ -496,22 +582,24 @@ export default function AdminPage() {
                 </div>
               </div>
 
-              <div className="panel">
+              <div className="panel admin-section-panel admin-section-network">
                 <div className="panel-header">
-                  <h2>CRUD tuyến</h2>
+                  <span className="panel-kicker">MẠNG LƯỚI</span>
+                  <h2>Tuyến đường</h2>
+                  <p>Cấu hình khoảng cách, thời lượng và chính sách hủy.</p>
                 </div>
                 <div className="panel-body form-grid">
                   <div className="two-cols">
-                    <input className="input" value={routeForm.from} onChange={(event) => setRouteForm((current) => ({ ...current, from: event.target.value }))} />
-                    <input className="input" value={routeForm.to} onChange={(event) => setRouteForm((current) => ({ ...current, to: event.target.value }))} />
+                    <input className="input" aria-label="Điểm đi của tuyến" placeholder="Điểm đi" value={routeForm.from} onChange={(event) => setRouteForm((current) => ({ ...current, from: event.target.value }))} />
+                    <input className="input" aria-label="Điểm đến của tuyến" placeholder="Điểm đến" value={routeForm.to} onChange={(event) => setRouteForm((current) => ({ ...current, to: event.target.value }))} />
                   </div>
                   <div className="two-cols">
-                    <input className="input" type="number" value={routeForm.distanceKm} onChange={(event) => setRouteForm((current) => ({ ...current, distanceKm: event.target.value }))} />
-                    <input className="input" type="number" value={routeForm.durationMinutes} onChange={(event) => setRouteForm((current) => ({ ...current, durationMinutes: event.target.value }))} />
+                    <input className="input" aria-label="Khoảng cách km" placeholder="Khoảng cách (km)" type="number" value={routeForm.distanceKm} onChange={(event) => setRouteForm((current) => ({ ...current, distanceKm: event.target.value }))} />
+                    <input className="input" aria-label="Thời gian di chuyển phút" placeholder="Thời gian (phút)" type="number" value={routeForm.durationMinutes} onChange={(event) => setRouteForm((current) => ({ ...current, durationMinutes: event.target.value }))} />
                   </div>
-                  <input className="input" value={routeForm.pickup} onChange={(event) => setRouteForm((current) => ({ ...current, pickup: event.target.value }))} />
-                  <input className="input" value={routeForm.dropoff} onChange={(event) => setRouteForm((current) => ({ ...current, dropoff: event.target.value }))} />
-                  <textarea className="textarea" value={routeForm.cancellationPolicy} onChange={(event) => setRouteForm((current) => ({ ...current, cancellationPolicy: event.target.value }))} />
+                  <input className="input" aria-label="Điểm đón mặc định" placeholder="Điểm đón mặc định" value={routeForm.pickup} onChange={(event) => setRouteForm((current) => ({ ...current, pickup: event.target.value }))} />
+                  <input className="input" aria-label="Điểm trả mặc định" placeholder="Điểm trả mặc định" value={routeForm.dropoff} onChange={(event) => setRouteForm((current) => ({ ...current, dropoff: event.target.value }))} />
+                  <textarea className="textarea" aria-label="Chính sách hủy vé" placeholder="Chính sách hủy vé" value={routeForm.cancellationPolicy} onChange={(event) => setRouteForm((current) => ({ ...current, cancellationPolicy: event.target.value }))} />
                   <button className="primary-button" onClick={createRoute} disabled={isLoading}>
                     <Plus size={18} /> {routeForm.id ? "Cập nhật tuyến" : "Tạo tuyến"}
                   </button>
@@ -540,37 +628,41 @@ export default function AdminPage() {
                 </div>
               </div>
 
-              <div className="panel">
+              <div className="panel admin-section-panel admin-section-trips">
                 <div className="panel-header">
-                  <h2>Tạo chuyến</h2>
+                  <span className="panel-kicker">LỊCH CHẠY</span>
+                  <h2>{tripForm.id ? "Chỉnh sửa chuyến" : "Tạo chuyến mới"}</h2>
+                  <p>Chọn tuyến, phương tiện, thời gian và mức giá bán.</p>
                 </div>
                 <div className="panel-body form-grid">
-                  <select className="select" value={tripForm.routeId} onChange={(event) => setTripForm((current) => ({ ...current, routeId: event.target.value }))}>
+                  <select className="select" aria-label="Tuyến xe" value={tripForm.routeId} onChange={(event) => setTripForm((current) => ({ ...current, routeId: event.target.value }))}>
                     {data.routes.map((route) => (
                       <option key={route.id} value={route.id}>{route.from} - {route.to}</option>
                     ))}
                   </select>
-                  <select className="select" value={tripForm.operatorId} onChange={(event) => setTripForm((current) => ({ ...current, operatorId: event.target.value }))}>
+                  <select className="select" aria-label="Nhà xe" value={tripForm.operatorId} onChange={(event) => setTripForm((current) => ({ ...current, operatorId: event.target.value }))}>
                     {data.catalog.operators.map((operator) => (
                       <option key={operator.id} value={operator.id}>{operator.name}</option>
                     ))}
                   </select>
-                  <select className="select" value={tripForm.vehicleId} onChange={(event) => setTripForm((current) => ({ ...current, vehicleId: event.target.value }))}>
+                  <select className="select" aria-label="Phương tiện" value={tripForm.vehicleId} onChange={(event) => setTripForm((current) => ({ ...current, vehicleId: event.target.value }))}>
                     {data.catalog.vehicles.map((vehicle) => (
                       <option key={vehicle.id} value={vehicle.id}>{vehicle.type} - {vehicle.plate}</option>
                     ))}
                   </select>
-                  <input className="input" value={tripForm.departureTime} onChange={(event) => setTripForm((current) => ({ ...current, departureTime: event.target.value }))} />
-                  <input className="input" type="number" value={tripForm.price} onChange={(event) => setTripForm((current) => ({ ...current, price: event.target.value }))} />
+                  <input className="input" aria-label="Thời gian khởi hành" value={tripForm.departureTime} onChange={(event) => setTripForm((current) => ({ ...current, departureTime: event.target.value }))} />
+                  <input className="input" aria-label="Giá vé" placeholder="Giá vé" type="number" value={tripForm.price} onChange={(event) => setTripForm((current) => ({ ...current, price: event.target.value }))} />
                   <button className="primary-button" onClick={createTrip} disabled={isLoading}>
                     <Save size={18} /> {tripForm.id ? "Cập nhật chuyến" : "Lưu chuyến"}
                   </button>
                 </div>
               </div>
 
-              <div className="panel">
+              <div className="panel admin-section-panel admin-section-vehicles">
                 <div className="panel-header">
-                  <h2>CRUD xe</h2>
+                  <span className="panel-kicker">ĐỘI XE</span>
+                  <h2>Phương tiện</h2>
+                  <p>Quản lý biển số, loại xe và cấu hình số ghế.</p>
                 </div>
                 <div className="panel-body form-grid">
                   <div className="two-cols">
@@ -611,9 +703,11 @@ export default function AdminPage() {
             </div>
 
             <div className="stack">
-              <div className="panel">
+              <div className="panel admin-section-panel admin-section-operations">
                 <div className="panel-header">
-                  <h2>Check-in và khóa ghế</h2>
+                  <span className="panel-kicker">TÁC VỤ NHANH</span>
+                  <h2>{user.role === "ADMIN" ? "Vận hành ghế và check-in" : "Check-in hành khách"}</h2>
+                  <p>Khóa ghế bảo trì hoặc xác nhận hành khách lên xe.</p>
                 </div>
                 <div className="panel-body form-grid">
                   <select className="select" value={ops.tripId} onChange={(event) => setOps((current) => ({ ...current, tripId: event.target.value }))}>
@@ -621,17 +715,21 @@ export default function AdminPage() {
                       <option key={trip.id} value={trip.id}>{trip.from} - {trip.to} {shortDateTime(trip.departureTime)}</option>
                     ))}
                   </select>
-                  <input className="input" value={ops.seatIds} onChange={(event) => setOps((current) => ({ ...current, seatIds: event.target.value }))} placeholder="A01,A02" />
-                  <div className="two-cols">
-                    <button className="ghost-button" onClick={() => blockSeats(true)}>
-                      <Lock size={18} /> Khóa ghế
-                    </button>
-                    <button className="ghost-button" onClick={() => blockSeats(false)}>
-                      Mở khóa
-                    </button>
-                  </div>
+                  {user.role === "ADMIN" && (
+                    <>
+                      <input className="input" value={ops.seatIds} onChange={(event) => setOps((current) => ({ ...current, seatIds: event.target.value }))} placeholder="A01,A02" />
+                      <div className="two-cols">
+                        <button className="ghost-button" onClick={() => blockSeats(true)} disabled={isLoading}>
+                          <Lock size={18} /> Khóa ghế
+                        </button>
+                        <button className="ghost-button" onClick={() => blockSeats(false)} disabled={isLoading}>
+                          Mở khóa
+                        </button>
+                      </div>
+                    </>
+                  )}
                   <input className="input" value={ops.codeOrTicket} onChange={(event) => setOps((current) => ({ ...current, codeOrTicket: event.target.value }))} placeholder="Mã booking hoặc mã vé" />
-                  <button className="primary-button" onClick={checkIn}>
+                  <button className="primary-button" onClick={checkIn} disabled={isLoading}>
                     <CheckCircle2 size={18} /> Check-in
                   </button>
                   <button className="ghost-button" onClick={loadTripBookings}>
@@ -640,9 +738,10 @@ export default function AdminPage() {
                 </div>
               </div>
 
-              <div className="panel">
+              <div className="panel admin-section-panel admin-section-operations">
                 <div className="panel-header">
                   <h2>Booking theo chuyến</h2>
+                  <p>Chọn chuyến và tải danh sách hành khách để đối soát.</p>
                 </div>
                 <div className="panel-body">
                   {tripBookings.length === 0 && <div className="empty">Chưa tải hoặc chưa có booking.</div>}
@@ -669,7 +768,7 @@ export default function AdminPage() {
                 </div>
               </div>
 
-              <div className="panel">
+              {user.role === "ADMIN" && <div className="panel admin-section-panel admin-section-overview">
                 <div className="panel-header">
                   <h2>Top tuyến</h2>
                 </div>
@@ -687,9 +786,9 @@ export default function AdminPage() {
                   </table>
                   </div>
                 </div>
-              </div>
+              </div>}
 
-              <div className="panel">
+              {user.role === "ADMIN" && <div className="panel admin-section-panel admin-section-overview admin-event-panel">
                 <div className="panel-header">
                   <h2>Nhật ký sự kiện</h2>
                 </div>
@@ -712,15 +811,17 @@ export default function AdminPage() {
                     </div>
                   )}
                 </div>
-              </div>
+              </div>}
             </div>
           </section>
         )}
 
         {data && (
-          <section className="panel">
+          <section className="panel admin-section-panel admin-section-trips admin-trip-list-panel">
             <div className="panel-header">
-              <h2>Chuyến đang bán</h2>
+              <span className="panel-kicker">DANH SÁCH</span>
+              <h2>Chuyến xe</h2>
+              <p>Thay đổi trạng thái, chỉnh sửa hoặc ngừng bán từng chuyến.</p>
             </div>
             <div className="panel-body">
               <div style={{ overflowX: "auto" }}>
@@ -738,20 +839,20 @@ export default function AdminPage() {
                       <td>{trip.availableSeats}</td>
                       <td>{trip.status}</td>
                       <td>
-                        <select className="select" value={trip.status} onChange={(event) => updateStatus(trip.id, event.target.value)} aria-label={`Trạng thái chuyến ${trip.id}`}>
-                          <option value="ACTIVE">ACTIVE</option>
-                          <option value="SUSPENDED">SUSPENDED</option>
-                          <option value="DEPARTED">DEPARTED</option>
-                          <option value="COMPLETED">COMPLETED</option>
-                        </select>
-                        {user?.role === "ADMIN" && (
+                        {user?.role === "ADMIN" ? (
                           <>
+                            <select className="select" value={trip.status} onChange={(event) => updateStatus(trip.id, event.target.value)} aria-label={`Trạng thái chuyến ${trip.id}`}>
+                              <option value="ACTIVE">ACTIVE</option>
+                              <option value="SUSPENDED">SUSPENDED</option>
+                              <option value="DEPARTED">DEPARTED</option>
+                              <option value="COMPLETED">COMPLETED</option>
+                            </select>
                             <button className="ghost-button" onClick={() => editTrip(trip)}>Sửa</button>
                             <button className="ghost-button" onClick={() => deleteTrip(trip.id)}>
                               <Trash2 size={16} /> Xóa
                             </button>
                           </>
-                        )}
+                        ) : <span className="badge status">{trip.status}</span>}
                       </td>
                     </tr>
                   ))}

@@ -19,6 +19,7 @@ export function createSeatInventory({
   trips = buildTrips(),
   seatCatalog = new Map(),
   initialState = {},
+  persistCatalog = async () => {},
   persistState = async () => {},
   onSeatChanged = async () => {}
 } = {}) {
@@ -65,6 +66,22 @@ export function createSeatInventory({
     }
 
     return { tripId, seats };
+  }
+
+  async function ensureTripInventory({ tripId, seatCount }) {
+    const normalizedCount = Number(seatCount);
+    if (!tripId || !Number.isInteger(normalizedCount) || normalizedCount < 1) {
+      throw new Error("tripId and a positive seatCount are required");
+    }
+    const current = seatCatalog.get(tripId);
+    if (!current?.length) {
+      const seats = buildSeatLabels(normalizedCount);
+      seatCatalog.set(tripId, seats);
+      await persistCatalog(tripId, seats);
+    } else if (current.length !== normalizedCount) {
+      throw new Error(`Trip ${tripId} already has ${current.length} inventory seats; requested ${normalizedCount}`);
+    }
+    return getSeatMap(tripId);
   }
 
   async function emitSeatChanged(tripId, message, snapshot = null) {
@@ -168,6 +185,40 @@ export function createSeatInventory({
     };
   }
 
+  async function verifyHold({ tripId, seatIds, holdToken, customerEmail }) {
+    const normalizedSeats = [...new Set(seatIds.map(normalizeSeatId).filter(Boolean))];
+    if (!tripId || !holdToken || normalizedSeats.length === 0) {
+      return { ok: false, message: "Phiên giữ ghế không đầy đủ.", expiresIn: 0 };
+    }
+    let expiresIn = Number.MAX_SAFE_INTEGER;
+    for (const seatId of normalizedSeats) {
+      const hold = await cache.get(holdKey(tripId, seatId));
+      if (!hold || hold.holdToken !== holdToken) {
+        return { ok: false, message: `Phiên giữ ghế ${seatId} đã hết hạn hoặc không hợp lệ.`, expiresIn: 0 };
+      }
+      if (customerEmail && String(hold.customerEmail).trim().toLowerCase() !== String(customerEmail).trim().toLowerCase()) {
+        return { ok: false, message: `Email không khớp với phiên giữ ghế ${seatId}.`, expiresIn: 0 };
+      }
+      expiresIn = Math.min(expiresIn, await cache.ttl(holdKey(tripId, seatId)));
+    }
+    return { ok: true, message: "Phiên giữ ghế hợp lệ.", expiresIn: Math.max(0, expiresIn) };
+  }
+
+  async function extendHold({ tripId, seatIds, holdToken, customerEmail, ttlSeconds = 900 }) {
+    const verified = await verifyHold({ tripId, seatIds, holdToken, customerEmail });
+    if (!verified.ok) return verified;
+    const normalizedSeats = [...new Set(seatIds.map(normalizeSeatId).filter(Boolean))];
+    const normalizedTtl = Math.max(60, Number(ttlSeconds) || 900);
+    const keys = normalizedSeats.map((seatId) => holdKey(tripId, seatId));
+    const extended = await cache.extendManyIfTokenMatches(keys, holdToken, normalizedTtl);
+    if (!extended) {
+      return { ok: false, message: "Phiên giữ ghế vừa thay đổi hoặc đã hết hạn.", expiresIn: 0 };
+    }
+    for (const seatId of normalizedSeats) scheduleSeatExpiry(tripId, seatId, holdToken, normalizedTtl);
+    await emitSeatChanged(tripId, "Đã gia hạn giữ ghế trong thời gian thanh toán.");
+    return { ok: true, message: "Đã gia hạn giữ ghế trong thời gian thanh toán.", expiresIn: normalizedTtl };
+  }
+
   async function confirmSeats({ tripId, seatIds, holdToken, bookingCode }) {
     const normalizedSeats = [...new Set(seatIds.map(normalizeSeatId).filter(Boolean))];
     for (const seatId of normalizedSeats) {
@@ -230,7 +281,10 @@ export function createSeatInventory({
 
   return {
     getSeatMap,
+    ensureTripInventory,
     holdSeats,
+    verifyHold,
+    extendHold,
     confirmSeats,
     releaseSeats,
     blockSeats,

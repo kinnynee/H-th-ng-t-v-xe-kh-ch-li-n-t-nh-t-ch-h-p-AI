@@ -18,11 +18,12 @@ export async function runMigrations(pool, directory, label) {
     .sort((left, right) => left.localeCompare(right));
 
   for (const name of files) {
+    const migrationKey = `${label}:${name}`;
     // Existing databases may have been initialized by the former .sql migrations.
-    const legacyName = name.replace(/\.js$/i, ".sql");
+    const legacyName = `${label}:${name.replace(/\.js$/i, ".sql")}`;
     const applied = await pool.query(
       "SELECT 1 FROM schema_migrations WHERE name = ANY($1::text[])",
-      [[name, legacyName]]
+      [[migrationKey, legacyName]]
     );
     if (applied.rowCount) continue;
     const migration = await import(pathToFileURL(path.join(directory, name)).href);
@@ -31,7 +32,7 @@ export async function runMigrations(pool, directory, label) {
     }
     await withTransaction(pool, async (db) => {
       await migration.up(db);
-      await db.query("INSERT INTO schema_migrations (name) VALUES ($1)", [name]);
+      await db.query("INSERT INTO schema_migrations (name) VALUES ($1)", [migrationKey]);
     });
     console.log(`[${label}] applied migration ${name}`);
   }

@@ -32,6 +32,13 @@ export function createMemoryTTLStore() {
       if (!item) return -2;
       return Math.max(0, Math.ceil((item.expiresAt - Date.now()) / 1000));
     },
+    async extendManyIfTokenMatches(keys, holdToken, ttlSeconds) {
+      const items = keys.map((key) => cleanup(key));
+      if (items.some((item) => !item || item.value?.holdToken !== holdToken)) return false;
+      const expiresAt = Date.now() + ttlSeconds * 1000;
+      items.forEach((item) => { item.expiresAt = expiresAt; });
+      return true;
+    },
     async keys(prefix) {
       const found = [];
       for (const key of values.keys()) {
@@ -84,6 +91,24 @@ export function createCacheAdapter(redisClient) {
     },
     async ttl(key) {
       return redisClient.ttl(key);
+    },
+    async extendManyIfTokenMatches(keys, holdToken, ttlSeconds) {
+      if (keys.length === 0) return false;
+      const script = `
+        for i, key in ipairs(KEYS) do
+          local raw = redis.call('GET', key)
+          if not raw then return 0 end
+          local ok, value = pcall(cjson.decode, raw)
+          if not ok or value['holdToken'] ~= ARGV[1] then return 0 end
+        end
+        for i, key in ipairs(KEYS) do redis.call('EXPIRE', key, ARGV[2]) end
+        return 1
+      `;
+      const result = await redisClient.eval(script, {
+        keys,
+        arguments: [String(holdToken), String(ttlSeconds)]
+      });
+      return Number(result) === 1;
     },
     async keys(prefix) {
       return redisClient.keys(`${prefix}*`);

@@ -22,12 +22,29 @@ export function createSeatGrpcController(inventory) {
 
   return {
     getSeatMap: invoke((request) => inventory.getSeatMap(request.tripId)),
+    ensureTripInventory: invoke((request) => inventory.ensureTripInventory({
+      tripId: request.tripId,
+      seatCount: request.seatCount
+    }), { serviceOnly: true }),
     holdSeats: invoke((request) => inventory.holdSeats({
       tripId: request.tripId,
       seatIds: request.seatIds,
       customerEmail: request.customerEmail,
       idempotencyKey: request.idempotencyKey,
       ttlSeconds: request.ttlSeconds || 300
+    }), { serviceOnly: true }),
+    verifyHold: invoke((request) => inventory.verifyHold({
+      tripId: request.tripId,
+      seatIds: request.seatIds,
+      holdToken: request.holdToken,
+      customerEmail: request.customerEmail
+    }), { serviceOnly: true }),
+    extendHold: invoke((request) => inventory.extendHold({
+      tripId: request.tripId,
+      seatIds: request.seatIds,
+      holdToken: request.holdToken,
+      customerEmail: request.customerEmail,
+      ttlSeconds: request.ttlSeconds || 900
     }), { serviceOnly: true }),
     confirmSeats: invoke((request) => inventory.confirmSeats({
       tripId: request.tripId,

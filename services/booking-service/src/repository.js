@@ -14,17 +14,22 @@ function bookingFromRow(row) {
     pickup: row.pickup,
     dropoff: row.dropoff,
     vehiclePlate: row.vehicle_plate,
+    cancellationPolicy: row.cancellation_policy ?? "",
     holdToken: row.hold_token,
     guestAccessTokenHash: row.guest_access_token_hash,
+    guestAccessExpiresAt: row.guest_access_expires_at,
     customerEmail: row.customer_email,
     customerPhone: row.customer_phone,
     userId: row.user_id,
     seatIds: asArray(row.seat_ids),
     passengers: asArray(row.passengers),
     totalAmount: Number(row.total_amount),
+    refundAmount: Number(row.refund_amount ?? 0),
+    cancellationFee: Number(row.cancellation_fee ?? 0),
     status: row.status,
     tickets: asArray(row.tickets),
     createdAt: row.created_at,
+    paymentExpiresAt: row.payment_expires_at,
     updatedAt: row.updated_at,
     paidAt: row.paid_at,
     checkedInAt: row.checked_in_at,
@@ -108,22 +113,27 @@ export async function saveBooking(pool, booking) {
   if (!pool) return;
   await pool.query(
     `INSERT INTO bookings (
-      code, trip_id, route_name, departure_time, pickup, dropoff, vehicle_plate, hold_token, guest_access_token_hash,
+      code, trip_id, route_name, departure_time, pickup, dropoff, vehicle_plate, cancellation_policy, hold_token, guest_access_token_hash, guest_access_expires_at,
       customer_email, customer_phone, user_id, seat_ids, passengers, total_amount, status,
-      tickets, created_at, updated_at, paid_at, checked_in_at, cancelled_at
+      refund_amount, cancellation_fee, tickets, created_at, payment_expires_at, updated_at, paid_at, checked_in_at, cancelled_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15, $16,
-      $17::jsonb, $18, $19, $20, $21, $22
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16::jsonb, $17, $18,
+      $19, $20, $21::jsonb, $22, $23, $24, $25, $26, $27
     ) ON CONFLICT (code) DO UPDATE SET
       seat_ids = EXCLUDED.seat_ids, passengers = EXCLUDED.passengers, total_amount = EXCLUDED.total_amount,
-      status = EXCLUDED.status, tickets = EXCLUDED.tickets, updated_at = EXCLUDED.updated_at,
+      status = EXCLUDED.status, refund_amount = EXCLUDED.refund_amount, cancellation_fee = EXCLUDED.cancellation_fee,
+      tickets = EXCLUDED.tickets, updated_at = EXCLUDED.updated_at,
+      payment_expires_at = EXCLUDED.payment_expires_at,
+      guest_access_token_hash = EXCLUDED.guest_access_token_hash,
+      guest_access_expires_at = EXCLUDED.guest_access_expires_at,
       paid_at = EXCLUDED.paid_at, checked_in_at = EXCLUDED.checked_in_at, cancelled_at = EXCLUDED.cancelled_at`,
     [
       booking.code, booking.tripId, booking.routeName, booking.departureTime, booking.pickup, booking.dropoff,
-      booking.vehiclePlate, booking.holdToken, booking.guestAccessTokenHash ?? null,
-      booking.customerEmail, booking.customerPhone, booking.userId || null,
+      booking.vehiclePlate, booking.cancellationPolicy ?? "", booking.holdToken, booking.guestAccessTokenHash ?? null,
+      booking.guestAccessExpiresAt ?? null, booking.customerEmail, booking.customerPhone, booking.userId || null,
       JSON.stringify(booking.seatIds), JSON.stringify(booking.passengers), booking.totalAmount, booking.status,
-      JSON.stringify(booking.tickets), booking.createdAt, booking.updatedAt, booking.paidAt ?? null,
+      booking.refundAmount ?? 0, booking.cancellationFee ?? 0,
+      JSON.stringify(booking.tickets), booking.createdAt, booking.paymentExpiresAt ?? null, booking.updatedAt, booking.paidAt ?? null,
       booking.checkedInAt ?? null, booking.cancelledAt ?? null
     ]
   );

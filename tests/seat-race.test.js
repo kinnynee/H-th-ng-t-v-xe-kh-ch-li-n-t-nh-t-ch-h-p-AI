@@ -116,3 +116,56 @@ test("uses a persisted seat catalog when one is provided", async () => {
   assert.deepEqual(map.seats.map((seat) => seat.id), ["C01", "C02"]);
   assert.deepEqual(map.seats.map((seat) => seat.status), ["AVAILABLE", "AVAILABLE"]);
 });
+
+test("new trips receive the requested inventory and holds are verified", async () => {
+  const persisted = [];
+  const inventory = createSeatInventory({
+    cache: createMemoryTTLStore(),
+    trips: [],
+    persistCatalog: async (tripId, seats) => persisted.push({ tripId, seats })
+  });
+  const map = await inventory.ensureTripInventory({ tripId: "trip-new", seatCount: 22 });
+  assert.equal(map.seats.length, 22);
+  assert.equal(persisted[0].seats.length, 22);
+  const hold = await inventory.holdSeats({
+    tripId: "trip-new", seatIds: ["A01", "A02"], customerEmail: "buyer@example.com", ttlSeconds: 60
+  });
+  assert.equal(hold.ok, true);
+  assert.equal((await inventory.verifyHold({
+    tripId: "trip-new", seatIds: ["A01", "A02"], holdToken: hold.holdToken, customerEmail: "buyer@example.com"
+  })).ok, true);
+  assert.equal((await inventory.verifyHold({
+    tripId: "trip-new", seatIds: ["A01"], holdToken: hold.holdToken, customerEmail: "other@example.com"
+  })).ok, false);
+});
+
+test("booking creation can atomically extend every owned seat hold", async () => {
+  const inventory = createSeatInventory({ cache: createMemoryTTLStore() });
+  const tripId = "trip-hcm-dalat-early";
+  const hold = await inventory.holdSeats({
+    tripId,
+    seatIds: ["A05", "A06"],
+    customerEmail: "buyer@example.com",
+    idempotencyKey: "extend-two-seats",
+    ttlSeconds: 60
+  });
+
+  const extended = await inventory.extendHold({
+    tripId,
+    seatIds: ["A05", "A06"],
+    holdToken: hold.holdToken,
+    customerEmail: "buyer@example.com",
+    ttlSeconds: 900
+  });
+  assert.equal(extended.ok, true);
+  assert.equal(extended.expiresIn, 900);
+
+  const wrongOwner = await inventory.extendHold({
+    tripId,
+    seatIds: ["A05", "A06"],
+    holdToken: "somebody-else",
+    customerEmail: "buyer@example.com",
+    ttlSeconds: 900
+  });
+  assert.equal(wrongOwner.ok, false);
+});

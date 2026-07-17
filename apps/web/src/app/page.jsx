@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowRight, Bus, CalendarDays, Clock3, MapPin, Search, SlidersHorizontal, Ticket } from "lucide-react";
+import { ArrowRight, Bus, CalendarDays, Clock3, Headphones, MapPin, Search, ShieldCheck, SlidersHorizontal, Ticket, UsersRound, Zap } from "lucide-react";
 import ChatWidget from "../components/ChatWidget";
 import SiteChrome from "../components/SiteChrome";
 import { gql, money, shortDateTime, todayISO } from "../lib/graphql";
@@ -14,6 +14,7 @@ query Catalog {
     operators { id name hotline }
     vehicles { id plate type seatCount layout }
   }
+  routes { id from to distanceKm durationMinutes pickup dropoff cancellationPolicy }
 }`;
 
 const SEARCH = `
@@ -28,8 +29,18 @@ query Search($input: SearchTripsInput!) {
   }
 }`;
 
+const SEARCH_FORM_FIELDS = [
+  "from", "to", "date", "sort", "timeFrom", "timeTo",
+  "maxPrice", "operator", "busType", "minSeats"
+];
+
+function submittedSearchForm(formElement, currentForm) {
+  const data = new FormData(formElement);
+  return Object.fromEntries(SEARCH_FORM_FIELDS.map((key) => [key, String(data.get(key) ?? currentForm[key] ?? "")]));
+}
+
 export default function HomePage() {
-  const [catalog, setCatalog] = useState({ locations: [], operators: [], vehicles: [] });
+  const [catalog, setCatalog] = useState({ locations: [], operators: [], vehicles: [], routes: [] });
   const [form, setForm] = useState({
     from: "TP.HCM",
     to: "Đà Lạt",
@@ -45,6 +56,7 @@ export default function HomePage() {
   const [result, setResult] = useState({ trips: [], suggestionDate: null, cache: "" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const locationNames = useMemo(
     () => [...new Set(catalog.locations.flatMap((item) => [item.name, ...(item.stations ?? [])]))],
@@ -53,7 +65,7 @@ export default function HomePage() {
 
   async function loadCatalog() {
     const data = await gql(CATALOG);
-    setCatalog(data.catalog);
+    setCatalog({ ...data.catalog, routes: data.routes });
   }
 
   async function search(nextForm = form) {
@@ -83,20 +95,43 @@ export default function HomePage() {
     setForm((current) => ({ ...current, [key]: value }));
   }
 
+  function choosePopularRoute(route) {
+    const nextForm = { ...form, from: route.from, to: route.to };
+    setForm(nextForm);
+    search(nextForm);
+    window.requestAnimationFrame(() => document.querySelector(".results-area")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }
+
   return (
     <SiteChrome>
-      <main className="page split">
-        <aside className="panel">
+      <main className="page stack home-page">
+        <section className="customer-hero">
+          <div>
+            <span className="customer-eyebrow">VÉ XE LIÊN TỈNH AI</span>
+            <h1>Chất lượng cho mọi hành trình</h1>
+            <p>Đặt vé nhanh, chọn ghế trực tiếp và quản lý toàn bộ chuyến đi trên một nền tảng.</p>
+          </div>
+          <div className="customer-trust-list" aria-label="Cam kết dịch vụ">
+            <span><ShieldCheck size={17} /> Giao dịch an toàn</span>
+            <span><Zap size={17} /> Ghế cập nhật tức thời</span>
+            <span><Headphones size={17} /> Đồng hành 24/7</span>
+          </div>
+        </section>
+
+        <div className="split search-layout">
+        <aside className="panel search-panel">
           <div className="panel-header">
             <h1>Tìm chuyến xe</h1>
-            <p>Chọn tuyến, ngày đi và bộ lọc phù hợp.</p>
+            <p>Một chiều · Chọn điểm đi, điểm đến và ngày khởi hành.</p>
           </div>
           <div className="panel-body">
             <form
               className="form-grid"
               onSubmit={(event) => {
                 event.preventDefault();
-                search();
+                const nextForm = submittedSearchForm(event.currentTarget, form);
+                setForm(nextForm);
+                search(nextForm);
               }}
             >
               <datalist id="locations">
@@ -106,60 +141,68 @@ export default function HomePage() {
               </datalist>
               <label className="field">
                 <span>Điểm đi</span>
-                <input className="input" list="locations" value={form.from} onChange={(event) => update("from", event.target.value)} />
+                <input className="input" name="from" list="locations" value={form.from} onChange={(event) => update("from", event.target.value)} />
               </label>
               <label className="field">
                 <span>Điểm đến</span>
-                <input className="input" list="locations" value={form.to} onChange={(event) => update("to", event.target.value)} />
+                <input className="input" name="to" list="locations" value={form.to} onChange={(event) => update("to", event.target.value)} />
               </label>
               <label className="field">
                 <span>Ngày đi</span>
-                <input className="input" type="date" value={form.date} onChange={(event) => update("date", event.target.value)} />
+                <input className="input" name="date" type="date" min={todayISO(0)} value={form.date} onChange={(event) => update("date", event.target.value)} />
               </label>
-              <div className="two-cols">
-                <label className="field">
-                  <span>Từ giờ</span>
-                  <input className="input" type="time" value={form.timeFrom} onChange={(event) => update("timeFrom", event.target.value)} />
-                </label>
-                <label className="field">
-                  <span>Đến giờ</span>
-                  <input className="input" type="time" value={form.timeTo} onChange={(event) => update("timeTo", event.target.value)} />
-                </label>
-              </div>
-              <label className="field">
-                <span>Giá tối đa</span>
-                <input className="input" inputMode="numeric" value={form.maxPrice} onChange={(event) => update("maxPrice", event.target.value)} placeholder="450000" />
-              </label>
-              <label className="field">
-                <span>Nhà xe</span>
-                <select className="select" value={form.operator} onChange={(event) => update("operator", event.target.value)}>
-                  <option value="">Tất cả nhà xe</option>
-                  {catalog.operators.map((operator) => (
-                    <option key={operator.id} value={operator.id}>{operator.name}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="field">
-                <span>Loại xe</span>
-                <select className="select" value={form.busType} onChange={(event) => update("busType", event.target.value)}>
-                  <option value="">Tất cả loại xe</option>
-                  {[...new Set(catalog.vehicles.map((vehicle) => vehicle.type))].map((type) => (
-                    <option key={type} value={type}>{type}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="field">
-                <span>Ghế trống tối thiểu</span>
-                <input className="input" inputMode="numeric" value={form.minSeats} onChange={(event) => update("minSeats", event.target.value)} placeholder="2" />
-              </label>
-              <label className="field">
-                <span>Sắp xếp</span>
-                <select className="select" value={form.sort} onChange={(event) => update("sort", event.target.value)}>
-                  <option value="DEPARTURE_ASC">Giờ đi sớm nhất</option>
-                  <option value="PRICE_ASC">Giá thấp nhất</option>
-                  <option value="DURATION_ASC">Thời gian ngắn nhất</option>
-                </select>
-              </label>
+              <button className="filter-toggle" type="button" onClick={() => setShowAdvanced((current) => !current)} aria-expanded={showAdvanced}>
+                <SlidersHorizontal size={17} /> Bộ lọc nâng cao
+                <span>{showAdvanced ? "Thu gọn" : "Mở"}</span>
+              </button>
+              {showAdvanced && (
+                <div className="advanced-filters">
+                  <div className="two-cols">
+                    <label className="field">
+                      <span>Từ giờ</span>
+                      <input className="input" name="timeFrom" type="time" value={form.timeFrom} onChange={(event) => update("timeFrom", event.target.value)} />
+                    </label>
+                    <label className="field">
+                      <span>Đến giờ</span>
+                      <input className="input" name="timeTo" type="time" value={form.timeTo} onChange={(event) => update("timeTo", event.target.value)} />
+                    </label>
+                  </div>
+                  <label className="field">
+                    <span>Giá tối đa</span>
+                    <input className="input" name="maxPrice" inputMode="numeric" value={form.maxPrice} onChange={(event) => update("maxPrice", event.target.value)} placeholder="450000" />
+                  </label>
+                  <label className="field">
+                    <span>Nhà xe</span>
+                    <select className="select" name="operator" value={form.operator} onChange={(event) => update("operator", event.target.value)}>
+                      <option value="">Tất cả nhà xe</option>
+                      {catalog.operators.map((operator) => (
+                        <option key={operator.id} value={operator.id}>{operator.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>Loại xe</span>
+                    <select className="select" name="busType" value={form.busType} onChange={(event) => update("busType", event.target.value)}>
+                      <option value="">Tất cả loại xe</option>
+                      {[...new Set(catalog.vehicles.map((vehicle) => vehicle.type))].map((type) => (
+                        <option key={type} value={type}>{type}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>Ghế trống tối thiểu</span>
+                    <input className="input" name="minSeats" inputMode="numeric" value={form.minSeats} onChange={(event) => update("minSeats", event.target.value)} placeholder="2" />
+                  </label>
+                  <label className="field">
+                    <span>Sắp xếp</span>
+                    <select className="select" name="sort" value={form.sort} onChange={(event) => update("sort", event.target.value)}>
+                      <option value="DEPARTURE_ASC">Giờ đi sớm nhất</option>
+                      <option value="PRICE_ASC">Giá thấp nhất</option>
+                      <option value="DURATION_ASC">Thời gian ngắn nhất</option>
+                    </select>
+                  </label>
+                </div>
+              )}
               <button className="primary-button" type="submit">
                 <Search size={18} /> Tìm chuyến
               </button>
@@ -167,14 +210,14 @@ export default function HomePage() {
           </div>
         </aside>
 
-        <section>
+        <section className="results-area">
           <div className="section-title">
             <div>
               <h2>Chuyến phù hợp</h2>
-              <p>{loading ? "Đang tải..." : `${result.trips.length} chuyến, cache ${result.cache || "N/A"}`}</p>
+              <p>{loading ? "Đang tìm chuyến phù hợp..." : `${result.trips.length} chuyến cho ${form.from} → ${form.to}`}</p>
             </div>
-            <span className="badge">
-              <SlidersHorizontal size={14} /> GraphQL Gateway
+            <span className="badge integration-badge">
+              <span className="pulse-dot" /> Cập nhật trực tiếp
             </span>
           </div>
 
@@ -222,7 +265,37 @@ export default function HomePage() {
               </article>
             ))}
           </div>
+          <section className="popular-routes-section">
+            <div className="customer-section-heading">
+              <span>TUYẾN PHỔ BIẾN</span>
+              <h2>Được hành khách tin tưởng lựa chọn</h2>
+            </div>
+            <div className="popular-route-grid">
+              {catalog.routes.slice(0, 6).map((route) => (
+                <button className="popular-route-card" type="button" key={route.id} onClick={() => choosePopularRoute(route)}>
+                  <div>
+                    <small>Tuyến xe</small>
+                    <strong>{route.from} <ArrowRight size={16} /> {route.to}</strong>
+                  </div>
+                  <span>{route.distanceKm} km · {Math.round(route.durationMinutes / 60)} giờ</span>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="customer-quality-section">
+            <div className="customer-section-heading">
+              <span>CHẤT LƯỢNG LÀ CAM KẾT</span>
+              <h2>An tâm trên từng chặng đường</h2>
+            </div>
+            <div className="quality-metrics">
+              <article><UsersRound size={26} /><strong>Phục vụ tận tâm</strong><p>Thông tin hành khách và vé được quản lý tập trung, rõ ràng.</p></article>
+              <article><Bus size={26} /><strong>Mạng lưới liên tỉnh</strong><p>Nhiều tuyến đường, nhà xe và loại phương tiện để lựa chọn.</p></article>
+              <article><Ticket size={26} /><strong>Vé điện tử tiện lợi</strong><p>Tra cứu vé, trạng thái và chính sách hủy ở mọi thời điểm.</p></article>
+            </div>
+          </section>
         </section>
+        </div>
       </main>
       <ChatWidget />
     </SiteChrome>

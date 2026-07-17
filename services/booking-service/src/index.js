@@ -12,6 +12,14 @@ import { demoUsers } from "./demo-users.js";
 import { createGuestAccessToken, hashGuestAccessToken, verifiesGuestAccessToken } from "./guest-access.js";
 import { validateBookingInput } from "./validation.js";
 import {
+  assertCheckInWindow,
+  cancelTickets,
+  cancellationQuote,
+  checkInTickets,
+  createBookingLock,
+  transitionBooking
+} from "./booking-domain.js";
+import {
   loadBookingRepository,
   saveBooking,
   saveUser
@@ -41,6 +49,7 @@ assertAuthConfiguration();
 
 let bookings = new Map();
 let users = new Map((process.env.NODE_ENV === "production" ? [] : demoUsers).map((user) => [user.id, structuredClone(user)]));
+const withBookingLock = createBookingLock();
 const database = await connectPostgres(process.env.DATABASE_URL, "booking-service");
 if (database) {
   const stored = await loadBookingRepository(database);
@@ -49,7 +58,8 @@ if (database) {
 }
 const tripServiceUrl = process.env.TRIP_SERVICE_URL || "http://localhost:4010";
 const publicBookingUrl = process.env.PUBLIC_BOOKING_URL || "http://localhost:4020";
-const pendingPaymentTtlSeconds = Math.max(60, Number(process.env.PENDING_PAYMENT_TTL_SECONDS || 300));
+const pendingPaymentTtlSeconds = Math.max(60, Number(process.env.PENDING_PAYMENT_TTL_SECONDS || 900));
+const guestAccessTtlSeconds = Math.max(60, Number(process.env.GUEST_ACCESS_TTL_SECONDS || 1800));
 
 function grpcCall(method, payload) {
   return new Promise((resolve, reject) => {
@@ -221,9 +231,20 @@ function requireCurrentUser(req, res, next) {
 function canAccessBooking(req, booking) {
   const user = requestUser(req);
   if (user && (["ADMIN", "STAFF"].includes(user.role) || (booking.userId && booking.userId === user.id))) return true;
-  const lookupEmail = String(req.query.email ?? "").trim().toLowerCase();
-  if (lookupEmail && lookupEmail === String(booking.customerEmail ?? "").trim().toLowerCase()) return true;
-  return verifiesGuestAccessToken(req.get("x-booking-access-token"), booking.guestAccessTokenHash);
+  return verifiesGuestAccessToken(
+    req.get("x-booking-access-token"),
+    booking.guestAccessTokenHash,
+    booking.guestAccessExpiresAt
+  );
+}
+
+function assertTripBookable(trip) {
+  if (trip.status !== "ACTIVE") throw new Error(`Trip is ${trip.status} and is not open for booking`);
+  if (Date.parse(trip.departureTime) <= Date.now()) throw new Error("Trip has already departed");
+}
+
+async function ensureTripInventory(trip) {
+  return grpcCall("ensureTripInventory", { tripId: trip.id, seatCount: trip.seatCount });
 }
 
 function rememberPassengers(userId, passengers) {
@@ -248,20 +269,22 @@ function rememberPassengers(userId, passengers) {
 function schedulePendingExpiry(booking) {
   if (booking._expiryTimerScheduled || booking.status !== "PENDING_PAYMENT") return;
   booking._expiryTimerScheduled = true;
-  const expiresAt = new Date(booking.createdAt).getTime() + pendingPaymentTtlSeconds * 1000;
+  const expiresAt = Date.parse(booking.paymentExpiresAt)
+    || new Date(booking.createdAt).getTime() + pendingPaymentTtlSeconds * 1000;
   const delay = Math.max(0, expiresAt - Date.now());
   setTimeout(async () => {
-    const current = bookings.get(booking.code);
-    if (!current || current.status !== "PENDING_PAYMENT") return;
-    await grpcCall("releaseSeats", {
-      tripId: current.tripId,
-      seatIds: current.seatIds,
-      holdToken: current.holdToken
-    }).catch(() => null);
-    current.status = "EXPIRED";
-    current.updatedAt = new Date().toISOString();
-    await saveBooking(database, current);
-    await publishKafka("booking-events", "BookingExpired", publicBooking(current));
+    await withBookingLock(booking.code, async () => {
+      const current = bookings.get(booking.code);
+      if (!current || current.status !== "PENDING_PAYMENT") return;
+      await grpcCall("releaseSeats", {
+        tripId: current.tripId,
+        seatIds: current.seatIds,
+        holdToken: current.holdToken
+      }).catch(() => null);
+      transitionBooking(current, "EXPIRED");
+      await saveBooking(database, current);
+      await publishKafka("booking-events", "BookingExpired", publicBooking(current));
+    });
   }, delay);
 }
 
@@ -290,6 +313,7 @@ app.get("/tickets/:code.html", (req, res) => {
   const booking = bookings.get(req.params.code);
   if (!booking) return res.status(404).send("Booking not found");
   if (!canAccessBooking(req, booking)) return res.status(403).send("Ticket access is denied");
+  if (booking.status === "CANCELLED") return res.status(410).send("Ticket has been cancelled");
   res.type("html").send(ticketHtml(booking));
 });
 
@@ -297,6 +321,7 @@ app.get("/tickets/:code.pdf", (req, res) => {
   const booking = bookings.get(req.params.code);
   if (!booking) return res.status(404).send("Booking not found");
   if (!canAccessBooking(req, booking)) return res.status(403).send("Ticket access is denied");
+  if (booking.status === "CANCELLED") return res.status(410).send("Ticket has been cancelled");
   res.setHeader("content-type", "application/pdf");
   res.setHeader("content-disposition", `inline; filename="${booking.code}.pdf"`);
   res.send(Buffer.from(simpleTicketPdf(booking), "utf8"));
@@ -304,7 +329,8 @@ app.get("/tickets/:code.pdf", (req, res) => {
 
 app.get("/seat-map/:tripId", async (req, res) => {
   try {
-    const seatMap = await grpcCall("getSeatMap", { tripId: req.params.tripId });
+    const trip = await getTrip(req.params.tripId);
+    const seatMap = await ensureTripInventory(trip);
     res.json(seatMap);
   } catch (error) {
     res.status(503).json({ error: error.message });
@@ -313,6 +339,9 @@ app.get("/seat-map/:tripId", async (req, res) => {
 
 app.post("/holds", async (req, res) => {
   try {
+    const trip = await getTrip(req.body.tripId);
+    assertTripBookable(trip);
+    await ensureTripInventory(trip);
     const result = await grpcCall("holdSeats", {
       tripId: req.body.tripId,
       seatIds: req.body.seatIds ?? [],
@@ -336,41 +365,71 @@ app.post("/bookings", async (req, res) => {
     const validationError = validateBookingInput({ ...req.body, passengers });
     if (validationError) return res.status(400).json({ error: validationError });
     const trip = await getTrip(req.body.tripId);
+    assertTripBookable(trip);
     const seatIds = passengers.map((passenger) => String(passenger.seatId).trim().toUpperCase());
-    const code = bookingCode();
-    const guestAccessToken = createGuestAccessToken();
-    const booking = {
-      code,
-      tripId: trip.id,
-      routeName: `${trip.from} - ${trip.to}`,
-      departureTime: trip.departureTime,
-      pickup: trip.pickup,
-      dropoff: trip.dropoff,
-      vehiclePlate: trip.vehiclePlate,
-      holdToken: req.body.holdToken,
-      guestAccessTokenHash: hashGuestAccessToken(guestAccessToken),
-      customerEmail: req.body.customerEmail,
-      customerPhone: req.body.customerPhone,
-      userId: user?.role === "CUSTOMER" ? user.id : "",
-      seatIds,
-      passengers,
-      totalAmount: trip.price * seatIds.length,
-      status: "PENDING_PAYMENT",
-      tickets: [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    bookings.set(code, booking);
-    if (booking.userId) {
-      rememberPassengers(booking.userId, passengers);
-      await saveUser(database, users.get(booking.userId));
-    }
-    await saveBooking(database, booking);
-    schedulePendingExpiry(booking);
-    await publishKafka("booking-events", "BookingCreated", publicBooking(booking));
-    // The raw capability is returned only in this checkout response. It is
-    // never persisted or included in events, logs, or subsequent lookups.
-    res.status(201).json({ booking: { ...publicBooking(booking), guestAccessToken } });
+    await withBookingLock(`hold:${req.body.holdToken}`, async () => {
+      await ensureTripInventory(trip);
+      const hold = await grpcCall("verifyHold", {
+        tripId: trip.id,
+        seatIds,
+        holdToken: req.body.holdToken,
+        customerEmail: req.body.customerEmail
+      });
+      if (!hold.ok || hold.expiresIn <= 0) return res.status(409).json({ error: hold.message });
+      const duplicate = [...bookings.values()].find((item) =>
+        item.tripId === trip.id && item.holdToken === req.body.holdToken && item.status === "PENDING_PAYMENT"
+      );
+      if (duplicate) return res.status(409).json({ error: `Hold already belongs to booking ${duplicate.code}` });
+
+      const extendedHold = await grpcCall("extendHold", {
+        tripId: trip.id,
+        seatIds,
+        holdToken: req.body.holdToken,
+        customerEmail: req.body.customerEmail,
+        ttlSeconds: pendingPaymentTtlSeconds
+      });
+      if (!extendedHold.ok) return res.status(409).json({ error: extendedHold.message });
+
+      const code = bookingCode();
+      const guestAccessToken = createGuestAccessToken();
+      const now = new Date();
+      const booking = {
+        code,
+        tripId: trip.id,
+        routeName: `${trip.from} - ${trip.to}`,
+        departureTime: trip.departureTime,
+        pickup: trip.pickup,
+        dropoff: trip.dropoff,
+        vehiclePlate: trip.vehiclePlate,
+        cancellationPolicy: trip.cancellationPolicy,
+        holdToken: req.body.holdToken,
+        guestAccessTokenHash: hashGuestAccessToken(guestAccessToken),
+        guestAccessExpiresAt: new Date(now.getTime() + guestAccessTtlSeconds * 1000).toISOString(),
+        customerEmail: req.body.customerEmail,
+        customerPhone: req.body.customerPhone,
+        userId: user?.role === "CUSTOMER" ? user.id : "",
+        seatIds,
+        passengers,
+        totalAmount: trip.price * seatIds.length,
+        refundAmount: 0,
+        cancellationFee: 0,
+        status: "PENDING_PAYMENT",
+        tickets: [],
+        createdAt: now.toISOString(),
+        paymentExpiresAt: new Date(now.getTime() + pendingPaymentTtlSeconds * 1000).toISOString(),
+        updatedAt: now.toISOString()
+      };
+      bookings.set(code, booking);
+      if (booking.userId) {
+        rememberPassengers(booking.userId, passengers);
+        await saveUser(database, users.get(booking.userId));
+      }
+      await saveBooking(database, booking);
+      schedulePendingExpiry(booking);
+      await publishKafka("booking-events", "BookingCreated", publicBooking(booking));
+      // The raw capability is returned only in this checkout response.
+      res.status(201).json({ booking: { ...publicBooking(booking), guestAccessToken } });
+    });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -393,99 +452,136 @@ app.get("/bookings/:code", (req, res) => {
   res.json({ booking: publicBooking(booking) });
 });
 
-app.post("/bookings/:code/pay", async (req, res) => {
+app.post("/bookings/:code/guest-access", async (req, res) => {
   const booking = bookings.get(req.params.code);
   if (!booking) return res.status(404).json({ error: "Booking not found" });
-  if (!canAccessBooking(req, booking)) return res.status(403).json({ error: "Booking access is denied" });
-  if (booking.status !== "PENDING_PAYMENT") return res.status(409).json({ error: `Booking is ${booking.status}` });
-
-  if (!req.body.success) {
-    await grpcCall("releaseSeats", {
-      tripId: booking.tripId,
-      seatIds: booking.seatIds,
-      holdToken: booking.holdToken
-    }).catch(() => null);
-    booking.status = "PAYMENT_FAILED";
-    booking.updatedAt = new Date().toISOString();
-    await saveBooking(database, booking);
-    await publishKafka("payment-events", "PaymentFailed", publicBooking(booking));
-    return res.json({ booking: publicBooking(booking) });
+  const email = String(req.body.email ?? "").trim().toLowerCase();
+  if (!email || email !== String(booking.customerEmail ?? "").trim().toLowerCase()) {
+    return res.status(403).json({ error: "Booking code or email is incorrect" });
   }
-
-  const confirm = await grpcCall("confirmSeats", {
-    tripId: booking.tripId,
-    seatIds: booking.seatIds,
-    holdToken: booking.holdToken,
-    bookingCode: booking.code
-  });
-  if (!confirm.ok) return res.status(409).json({ error: confirm.message });
-
-  booking.status = "PAID";
-  booking.paidAt = new Date().toISOString();
-  booking.updatedAt = booking.paidAt;
-  booking.tickets = booking.passengers.map((passenger) => ({
-    id: ticketCode(booking, passenger.seatId),
-    passengerName: passenger.fullName,
-    seatId: passenger.seatId,
-    qrPayload: `${booking.code}-${passenger.seatId}`,
-    issuedAt: booking.paidAt
-  }));
-  await saveBooking(database, booking);
-
-  const paidEventPayload = publicBooking(booking);
-  await publishRabbit("booking.paid", paidEventPayload, "booking.paid");
-  await publishKafka("payment-events", "PaymentSucceeded", paidEventPayload);
-  await publishKafka("booking-events", "BookingPaid", paidEventPayload);
-
-  booking.status = "TICKET_ISSUED";
+  const guestAccessToken = createGuestAccessToken();
+  booking.guestAccessTokenHash = hashGuestAccessToken(guestAccessToken);
+  booking.guestAccessExpiresAt = new Date(Date.now() + guestAccessTtlSeconds * 1000).toISOString();
   booking.updatedAt = new Date().toISOString();
   await saveBooking(database, booking);
-  const issuedEventPayload = publicBooking(booking);
-  await publishKafka("booking-events", "TicketIssued", issuedEventPayload);
-  res.json({ booking: issuedEventPayload });
+  res.json({ guestAccessToken, expiresAt: booking.guestAccessExpiresAt });
+});
+
+app.post("/bookings/:code/pay", async (req, res) => {
+  try {
+    await withBookingLock(req.params.code, async () => {
+      const booking = bookings.get(req.params.code);
+      if (!booking) return res.status(404).json({ error: "Booking not found" });
+      if (!canAccessBooking(req, booking)) return res.status(403).json({ error: "Booking access is denied" });
+      if (booking.status !== "PENDING_PAYMENT") return res.status(409).json({ error: `Booking is ${booking.status}` });
+      if (Date.parse(booking.paymentExpiresAt) <= Date.now()) {
+        await grpcCall("releaseSeats", {
+          tripId: booking.tripId,
+          seatIds: booking.seatIds,
+          holdToken: booking.holdToken
+        }).catch(() => null);
+        transitionBooking(booking, "EXPIRED");
+        await saveBooking(database, booking);
+        await publishKafka("booking-events", "BookingExpired", publicBooking(booking));
+        return res.status(409).json({ error: "Booking payment window has expired" });
+      }
+
+      if (!req.body.success) {
+        await grpcCall("releaseSeats", { tripId: booking.tripId, seatIds: booking.seatIds, holdToken: booking.holdToken });
+        transitionBooking(booking, "PAYMENT_FAILED");
+        await saveBooking(database, booking);
+        await publishKafka("payment-events", "PaymentFailed", publicBooking(booking));
+        return res.json({ booking: publicBooking(booking) });
+      }
+
+      const confirm = await grpcCall("confirmSeats", {
+        tripId: booking.tripId, seatIds: booking.seatIds, holdToken: booking.holdToken, bookingCode: booking.code
+      });
+      if (!confirm.ok) return res.status(409).json({ error: confirm.message });
+
+      transitionBooking(booking, "PAID");
+      booking.paidAt = booking.updatedAt;
+      booking.tickets = booking.passengers.map((passenger) => ({
+        id: ticketCode(booking, passenger.seatId), passengerName: passenger.fullName,
+        seatId: passenger.seatId, qrPayload: `${booking.code}-${passenger.seatId}`,
+        issuedAt: booking.paidAt, status: "ISSUED", checkedInAt: null
+      }));
+      await saveBooking(database, booking);
+      const paidEventPayload = publicBooking(booking);
+      await publishRabbit("booking.paid", paidEventPayload, "booking.paid");
+      await publishKafka("payment-events", "PaymentSucceeded", paidEventPayload);
+      await publishKafka("booking-events", "BookingPaid", paidEventPayload);
+
+      transitionBooking(booking, "TICKET_ISSUED");
+      await saveBooking(database, booking);
+      const issuedEventPayload = publicBooking(booking);
+      await publishKafka("booking-events", "TicketIssued", issuedEventPayload);
+      return res.json({ booking: issuedEventPayload });
+    });
+  } catch (error) {
+    res.status(503).json({ error: error.message });
+  }
 });
 
 app.post("/bookings/:code/cancel", async (req, res) => {
-  const booking = bookings.get(req.params.code);
-  if (!booking) return res.status(404).json({ error: "Booking not found" });
-  if (!canAccessBooking(req, booking)) return res.status(403).json({ error: "Booking access is denied" });
-  if (["CHECKED_IN", "COMPLETED", "CANCELLED", "EXPIRED", "PAYMENT_FAILED"].includes(booking.status)) {
-    return res.status(409).json({ error: `Cannot cancel booking in ${booking.status}` });
+  try {
+    await withBookingLock(req.params.code, async () => {
+      const booking = bookings.get(req.params.code);
+      if (!booking) return res.status(404).json({ error: "Booking not found" });
+      if (!canAccessBooking(req, booking)) return res.status(403).json({ error: "Booking access is denied" });
+      if (!["PENDING_PAYMENT", "PAID", "TICKET_ISSUED"].includes(booking.status)) {
+        return res.status(409).json({ error: `Cannot cancel booking in ${booking.status}` });
+      }
+      if (booking.tickets.some((ticket) => ticket.status === "CHECKED_IN")) {
+        return res.status(409).json({ error: "Cannot cancel a booking with checked-in tickets" });
+      }
+      const quote = cancellationQuote(booking);
+      await grpcCall("releaseSeats", {
+        tripId: booking.tripId,
+        seatIds: booking.seatIds,
+        holdToken: booking.status === "PENDING_PAYMENT" ? booking.holdToken : booking.code
+      });
+      booking.refundAmount = quote.refundAmount;
+      booking.cancellationFee = quote.cancellationFee;
+      const cancelledAt = new Date();
+      cancelTickets(booking, cancelledAt);
+      transitionBooking(booking, "CANCELLED", cancelledAt);
+      booking.cancelledAt = booking.updatedAt;
+      await saveBooking(database, booking);
+      await publishKafka("booking-events", "BookingCancelled", publicBooking(booking));
+      return res.json({ booking: publicBooking(booking) });
+    });
+  } catch (error) {
+    res.status(409).json({ error: error.message });
   }
-  if (Date.parse(booking.departureTime) <= Date.now()) {
-    return res.status(409).json({ error: "Cannot cancel a booking after the trip has departed" });
-  }
-  await grpcCall("releaseSeats", {
-    tripId: booking.tripId,
-    seatIds: booking.seatIds,
-    holdToken: booking.status === "PENDING_PAYMENT" ? booking.holdToken : booking.code
-  }).catch(() => null);
-  booking.status = "CANCELLED";
-  booking.cancelledAt = new Date().toISOString();
-  booking.updatedAt = booking.cancelledAt;
-  await saveBooking(database, booking);
-  await publishKafka("booking-events", "BookingCancelled", publicBooking(booking));
-  res.json({ booking: publicBooking(booking) });
 });
 
 app.post("/checkin", requireRoles("ADMIN", "STAFF"), async (req, res) => {
   const codeOrTicket = req.body.codeOrTicket ?? "";
-  const booking = [...bookings.values()].find(
+  const found = [...bookings.values()].find(
     (item) => item.code === codeOrTicket || item.tickets.some((ticket) => ticket.id === codeOrTicket)
   );
-  if (!booking) return res.status(404).json({ error: "Booking or ticket not found" });
-  if (!["TICKET_ISSUED", "PAID"].includes(booking.status)) {
-    return res.status(409).json({ error: `Cannot check in booking in ${booking.status}` });
+  if (!found) return res.status(404).json({ error: "Booking or ticket not found" });
+  try {
+    await withBookingLock(found.code, async () => {
+      const booking = bookings.get(found.code);
+      if (!["TICKET_ISSUED", "PARTIALLY_CHECKED_IN"].includes(booking.status)) {
+        return res.status(409).json({ error: `Cannot check in booking in ${booking.status}` });
+      }
+      assertCheckInWindow(booking.departureTime);
+      const checkedTicketIds = checkInTickets(booking, codeOrTicket);
+      await saveBooking(database, booking);
+      await publishKafka("booking-events", "PassengerCheckedIn", {
+        ...publicBooking(booking), checkedTicketIds
+      });
+      return res.json({ booking: publicBooking(booking), checkedTicketIds });
+    });
+  } catch (error) {
+    return res.status(409).json({ error: error.message });
   }
-  booking.status = "CHECKED_IN";
-  booking.checkedInAt = new Date().toISOString();
-  booking.updatedAt = booking.checkedInAt;
-  await saveBooking(database, booking);
-  await publishKafka("booking-events", "PassengerCheckedIn", publicBooking(booking));
-  res.json({ booking: publicBooking(booking) });
 });
 
-app.post("/admin/block-seats", requireRoles("ADMIN", "STAFF"), async (req, res) => {
+app.post("/admin/block-seats", requireRoles("ADMIN"), async (req, res) => {
   try {
     const result = await grpcCall("blockSeats", {
       tripId: req.body.tripId,

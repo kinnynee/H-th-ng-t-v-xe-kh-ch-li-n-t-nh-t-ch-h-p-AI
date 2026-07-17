@@ -4,7 +4,9 @@ import { fileURLToPath } from "node:url";
 import { isoDate } from "@bus-ai/shared/seed";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const DB_PATH = resolve(__dirname, "../analytics.json");
+const DB_PATH = process.env.DATA_DIR
+  ? resolve(process.env.DATA_DIR, "analytics.json")
+  : resolve(__dirname, "../analytics.json");
 
 let state = {
   revenueByDay: {}, // e.g. "2024-05-18": { revenue: 100000, tickets: 2 }
@@ -28,6 +30,7 @@ export async function loadState() {
 
 async function saveState() {
   try {
+    await fs.mkdir(dirname(DB_PATH), { recursive: true });
     await fs.writeFile(DB_PATH, JSON.stringify(state, null, 2));
   } catch (err) {
     console.error("[analytics-store] Failed to save state:", err);
@@ -53,13 +56,13 @@ export async function recordBookingAttempt() {
 export async function recordPaymentSuccess(booking) {
   state.bookings++;
   
-  const today = isoDate(0);
-  if (!state.revenueByDay[today]) {
-    state.revenueByDay[today] = { revenue: 0, tickets: 0 };
+  const paymentDate = String(booking.paidAt ?? "").slice(0, 10) || isoDate(0);
+  if (!state.revenueByDay[paymentDate]) {
+    state.revenueByDay[paymentDate] = { revenue: 0, tickets: 0 };
   }
   
-  state.revenueByDay[today].revenue += booking.totalAmount || 0;
-  state.revenueByDay[today].tickets += booking.passengers?.length || 1;
+  state.revenueByDay[paymentDate].revenue += booking.totalAmount || 0;
+  state.revenueByDay[paymentDate].tickets += booking.passengers?.length || 1;
   
   const route = booking.routeName;
   if (route) {
@@ -69,6 +72,26 @@ export async function recordPaymentSuccess(booking) {
     state.popularRoutes[route].tickets += booking.passengers?.length || 1;
   }
   
+  await saveState();
+}
+
+export async function recordCancellation(booking) {
+  if (!booking.paidAt) return;
+  const paymentDate = String(booking.paidAt).slice(0, 10) || isoDate(0);
+  const tickets = booking.passengers?.length || 1;
+  if (!state.revenueByDay[paymentDate]) state.revenueByDay[paymentDate] = { revenue: 0, tickets: 0 };
+  state.revenueByDay[paymentDate].revenue = Math.max(
+    0,
+    state.revenueByDay[paymentDate].revenue - Number(booking.refundAmount || 0)
+  );
+  state.revenueByDay[paymentDate].tickets = Math.max(0, state.revenueByDay[paymentDate].tickets - tickets);
+  state.bookings = Math.max(0, state.bookings - 1);
+  if (booking.routeName && state.popularRoutes[booking.routeName]) {
+    state.popularRoutes[booking.routeName].tickets = Math.max(
+      0,
+      state.popularRoutes[booking.routeName].tickets - tickets
+    );
+  }
   await saveState();
 }
 

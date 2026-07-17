@@ -16,6 +16,19 @@ export async function seedSeatCatalog(pool, trips) {
   });
 }
 
+export async function ensureSeatCatalog(pool, tripId, seats) {
+  if (!pool) return;
+  await withTransaction(pool, async (db) => {
+    for (const seat of seats) {
+      await db.query(
+        `INSERT INTO seat_inventory (trip_id, seat_id, label, floor)
+         VALUES ($1, $2, $3, $4) ON CONFLICT (trip_id, seat_id) DO NOTHING`,
+        [tripId, seat.id, seat.label, seat.floor]
+      );
+    }
+  });
+}
+
 /** Loads the persisted seat catalog so runtime does not derive it from memory. */
 export async function loadSeatCatalog(pool) {
   if (!pool) return new Map();

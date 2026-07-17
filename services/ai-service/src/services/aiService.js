@@ -51,8 +51,19 @@ async function fallbackAssistant({ message, bookingCode, email }) {
   // Hỏi về chính sách hủy vé / đổi vé / hoàn tiền
   if (/\bhuy\b/.test(text) || text.includes("doi ve") || text.includes("hoan tien")) {
     sources.push("bus://policy/cancellation");
+    if (resolvedBookingCode && resolvedEmail) {
+      toolCalls.push("getBookingStatus");
+      const status = await getBookingStatus({ bookingCode: resolvedBookingCode, email: resolvedEmail });
+      if (!status.error) {
+        return {
+          answer: `Booking ${status.booking.code} áp dụng chính sách: ${status.booking.cancellationPolicy}`,
+          sources,
+          toolCalls
+        };
+      }
+    }
     return {
-      answer: `Theo chính sách hủy vé nội bộ: hủy trước 12 tiếng có thể được hoàn 100% tùy tuyến; sau khi xe khởi hành hoặc vé đã check-in thì không hoàn tiền.`,
+      answer: "Chính sách hoàn tiền phụ thuộc từng tuyến. Hãy cung cấp mã booking và email để mình tra đúng mức hoàn; booking đã khởi hành hoặc có vé đã check-in thì không thể hủy.",
       sources,
       toolCalls
     };

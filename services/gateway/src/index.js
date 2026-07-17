@@ -290,6 +290,8 @@ const typeDefs = /* GraphQL */ `
     seatId: String!
     qrPayload: String!
     issuedAt: String!
+    status: String!
+    checkedInAt: String
   }
 
   type Booking {
@@ -301,21 +303,31 @@ const typeDefs = /* GraphQL */ `
     pickup: String!
     dropoff: String!
     vehiclePlate: String!
+    cancellationPolicy: String!
     customerEmail: String!
     customerPhone: String
     seatIds: [String!]!
     passengers: [Passenger!]!
     totalAmount: Int!
+    refundAmount: Int!
+    cancellationFee: Int!
     status: String!
     tickets: [Ticket!]!
     ticketHtmlUrl: String!
     ticketPdfUrl: String!
     guestAccessToken: String
+    guestAccessExpiresAt: String
     createdAt: String!
+    paymentExpiresAt: String
     updatedAt: String!
     paidAt: String
     checkedInAt: String
     cancelledAt: String
+  }
+
+  type GuestBookingAccess {
+    guestAccessToken: String!
+    expiresAt: String!
   }
 
   type HoldResult {
@@ -402,6 +414,7 @@ const typeDefs = /* GraphQL */ `
   type Mutation {
     holdSeats(tripId: ID!, seatIds: [String!]!, customerEmail: String, ttlSeconds: Int): HoldResult!
     createBooking(input: CreateBookingInput!): Booking!
+    requestGuestBookingAccess(code: ID!, email: String!): GuestBookingAccess!
     payBooking(code: ID!, success: Boolean!): Booking!
     cancelBooking(code: ID!): Booking!
     checkIn(codeOrTicket: String!): Booking!
@@ -500,6 +513,10 @@ const resolvers = {
         body: JSON.stringify({ ...input, userId: auth.user?.role === "CUSTOMER" ? auth.user.id : undefined })
       })).booking;
     },
+    requestGuestBookingAccess: async (_parent, { code, email }) => requestJSON(
+      `${bookingUrl}/bookings/${code}/guest-access`,
+      { method: "POST", body: JSON.stringify({ email }) }
+    ),
     payBooking: async (_parent, { code, success }, context) => {
       const auth = context.user ? authenticatedHeaders(context) : { authorization: "" };
       const booking = (await requestJSON(`${bookingUrl}/bookings/${code}/pay`, {
@@ -595,11 +612,11 @@ const resolvers = {
       return (await requestJSON(`${tripUrl}/trips/${id}`, { method: "DELETE", headers: { authorization }, body: JSON.stringify({}) })).ok;
     },
     updateTripStatus: async (_parent, { id, status }, context) => {
-      const { authorization } = authenticatedHeaders(context, ["ADMIN", "STAFF"]);
+      const { authorization } = authenticatedHeaders(context, ["ADMIN"]);
       return (await requestJSON(`${tripUrl}/trips/${id}/status`, { method: "PATCH", headers: { authorization }, body: JSON.stringify({ status }) })).trip;
     },
     blockSeats: async (_parent, args, context) => {
-      const { authorization } = authenticatedHeaders(context, ["ADMIN", "STAFF"]);
+      const { authorization } = authenticatedHeaders(context, ["ADMIN"]);
       const result = await requestJSON(`${bookingUrl}/admin/block-seats`, {
         method: "POST",
         headers: { authorization },
@@ -641,6 +658,9 @@ const resolvers = {
   },
   Booking: {
     trip: async (booking) => (await requestJSON(`${tripUrl}/trips/${booking.tripId}`)).trip
+  },
+  Ticket: {
+    status: (ticket) => ticket.status ?? "ISSUED"
   }
 };
 

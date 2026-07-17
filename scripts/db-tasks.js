@@ -14,13 +14,12 @@ const services = task === "migrate"
   ? [
       "services/trip-service/scripts/migrate.js",
       "services/booking-service/scripts/migrate.js",
-      "services/seat-service/scripts/migrate.js",
-      "workers/analytics-worker/scripts/migrate.js"
+      "services/seat-service/scripts/migrate.js"
     ]
   : [
       "services/trip-service/scripts/seed.js",
       "services/booking-service/scripts/seed.js",
-      "workers/analytics-worker/scripts/seed.js"
+      "services/seat-service/scripts/seed.js"
     ];
 
 for (const script of services) {

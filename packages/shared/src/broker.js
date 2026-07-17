@@ -196,10 +196,14 @@ export async function subscribeKafka(groupId, topics, handler) {
     const admin = kafka.admin();
     await admin.connect();
     try {
-      await admin.createTopics({
-        topics: topics.map((topic) => ({ topic, numPartitions: 1, replicationFactor: 1 })),
-        waitForLeaders: true
-      });
+      const existingTopics = new Set(await admin.listTopics());
+      const missingTopics = topics.filter((topic) => !existingTopics.has(topic));
+      if (missingTopics.length) {
+        await admin.createTopics({
+          topics: missingTopics.map((topic) => ({ topic, numPartitions: 1, replicationFactor: 1 })),
+          waitForLeaders: true
+        });
+      }
     } finally {
       await admin.disconnect();
     }

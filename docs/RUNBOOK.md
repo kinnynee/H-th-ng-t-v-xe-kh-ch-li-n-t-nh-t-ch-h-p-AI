@@ -29,7 +29,7 @@ Các địa chỉ chính:
 - GraphQL: http://localhost:4001/graphql
 - RabbitMQ Management: http://localhost:15672 (`guest` / `guest`)
 
-Docker Compose sử dụng Redis, RabbitMQ và Kafka thật. PostgreSQL là tùy chọn; khi không có `DATABASE_URL`, các service dùng kho nhớ cho dữ liệu vận hành demo.
+Docker Compose sử dụng PostgreSQL, Redis, RabbitMQ và Kafka thật. Migration và seed chạy tự động qua service `db-setup`; volume `postgres-data` giữ booking, tài khoản, chuyến và trạng thái ghế qua các lần restart.
 
 ## Chạy local
 

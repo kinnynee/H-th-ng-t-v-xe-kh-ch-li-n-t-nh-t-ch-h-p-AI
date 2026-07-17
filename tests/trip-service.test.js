@@ -4,7 +4,7 @@ import { buildTrips, locations, operators, routes, vehicles } from "@bus-ai/shar
 import { createMemoryTTLStore } from "@bus-ai/shared/cache";
 import { createTripService } from "../services/trip-service/src/services/trip-service.js";
 
-function serviceFixture() {
+function serviceFixture({ now = () => Date.parse("2026-07-17T10:00:00+07:00") } = {}) {
   const writes = [];
   const stores = {
     routes: new Map(routes.map((route) => [route.id, { ...route }])),
@@ -23,7 +23,8 @@ function serviceFixture() {
       operators,
       cache: createMemoryTTLStore(),
       repository,
-      publishEvent: async () => {}
+      publishEvent: async () => {},
+      now
     }),
     writes
   };
@@ -41,6 +42,16 @@ test("trip application service owns validation, persistence and search caching",
   assert.equal(second.cache, "HIT");
   assert.ok(first.trips.length > 0);
   assert.equal(writes.some((item) => item.name === "saveStop"), true);
+});
+
+test("customer searches hide departed trips while admin searches retain them", async () => {
+  const nowMs = Date.parse("2026-07-17T17:00:00+07:00");
+  const { service } = serviceFixture({ now: () => nowMs });
+  const query = { from: "TP.HCM", to: "Đà Lạt", date: "2026-07-17" };
+  const customerSearch = await service.search(query);
+  const adminSearch = await service.search({ ...query, includeInactive: "true" });
+  assert.equal(customerSearch.trips.every((trip) => Date.parse(trip.departureTime) > nowMs), true);
+  assert.equal(adminSearch.trips.some((trip) => Date.parse(trip.departureTime) <= nowMs), true);
 });
 
 test("suspended trips are hidden from customers but visible to admin searches", async () => {

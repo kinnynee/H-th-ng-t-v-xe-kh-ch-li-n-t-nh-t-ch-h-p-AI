@@ -24,9 +24,9 @@ mutation Register($input: RegisterCustomerInput!) {
 const ACCOUNT = `
 query Account($userId: ID!) {
   myBookings(userId: $userId) {
-    code status routeName departureTime customerEmail totalAmount
+    code status routeName departureTime customerEmail totalAmount refundAmount cancellationFee cancellationPolicy
     seatIds
-    tickets { id seatId qrPayload }
+    tickets { id seatId qrPayload status checkedInAt }
   }
   savedPassengers(userId: $userId) {
     id fullName phone email documentId
@@ -49,6 +49,18 @@ const CANCEL = `
 mutation Cancel($code: ID!) {
   cancelBooking(code: $code) { code status }
 }`;
+
+const STATUS_LABELS = {
+  HELD: "Đang giữ ghế",
+  PENDING_PAYMENT: "Chờ thanh toán",
+  PAID: "Đã thanh toán",
+  TICKET_ISSUED: "Đã xuất vé",
+  PARTIALLY_CHECKED_IN: "Đã check-in một phần",
+  CHECKED_IN: "Đã check-in",
+  COMPLETED: "Hoàn thành",
+  CANCELLED: "Đã hủy",
+  EXPIRED: "Đã hết hạn"
+};
 
 export default function AccountPage() {
   const [mode, setMode] = useState("login");
@@ -98,10 +110,11 @@ export default function AccountPage() {
       localStorage.removeItem("busAdminUser");
       localStorage.setItem("busUser", JSON.stringify(nextUser));
       localStorage.setItem("busAccessToken", auth.accessToken);
+      window.dispatchEvent(new Event("bus-auth-changed"));
       setUser(nextUser);
       setPassenger((current) => ({ ...current, email: nextUser.email }));
       await loadAccount(nextUser);
-      setMessage("Đăng nhập customer thành công.");
+      setMessage("Đăng nhập tài khoản khách hàng thành công.");
     } catch (error) {
       setMessage(error.message);
     }
@@ -110,6 +123,7 @@ export default function AccountPage() {
   function logout() {
     localStorage.removeItem("busUser");
     localStorage.removeItem("busAccessToken");
+    window.dispatchEvent(new Event("bus-auth-changed"));
     setUser(null);
     setBookings([]);
     setPassengers([]);
@@ -144,11 +158,11 @@ export default function AccountPage() {
 
   return (
     <SiteChrome>
-      <main className="page stack">
-        <section className="section-title">
+      <main className={`page stack ${user ? "account-page" : "auth-page"}`}>
+        <section className={`section-title ${!user ? "auth-hero" : ""}`}>
           <div>
             <h1>Tài khoản khách hàng</h1>
-            <p>Registered Customer có thể xem lịch sử đặt vé và lưu hành khách thường dùng.</p>
+            <p>Quản lý vé đã đặt và lưu thông tin hành khách để đặt chuyến sau nhanh hơn.</p>
           </div>
           {user && <button className="ghost-button" onClick={logout}>Đăng xuất</button>}
         </section>
@@ -156,9 +170,9 @@ export default function AccountPage() {
         {message && <div className="empty">{message}</div>}
 
         {!user && (
-          <section className="panel">
+          <section className="panel auth-card">
             <div className="panel-header">
-              <h2>{mode === "login" ? "Đăng nhập customer" : "Tạo tài khoản customer"}</h2>
+              <h2>{mode === "login" ? "Đăng nhập tài khoản" : "Tạo tài khoản mới"}</h2>
             </div>
             <div className="panel-body form-grid">
               {mode === "register" && (
@@ -188,7 +202,7 @@ export default function AccountPage() {
         )}
 
         {user && (
-          <section className="split">
+          <section className="split account-layout">
             <div className="stack">
               <div className="panel">
                 <div className="panel-header">
@@ -228,18 +242,20 @@ export default function AccountPage() {
 
             <div className="panel">
               <div className="panel-header">
-                <h2>Lịch sử booking</h2>
-                <p>Booking được tạo khi checkout bằng tài khoản customer.</p>
+                <h2>Chuyến đi của tôi</h2>
+                <p>Các vé được đặt khi bạn sử dụng tài khoản này.</p>
               </div>
               <div className="panel-body stack">
-                {bookings.length === 0 && <div className="empty">Chưa có booking nào gắn với tài khoản này.</div>}
+                {bookings.length === 0 && <div className="empty">Bạn chưa có chuyến đi nào. Hãy tìm một chuyến phù hợp để bắt đầu.</div>}
                 {bookings.map((booking) => (
                   <article className="ticket-card" key={booking.code}>
-                    <span className="badge status">{booking.status}</span>
+                    <span className="badge status">{STATUS_LABELS[booking.status] ?? booking.status}</span>
                     <h3>{booking.code}</h3>
                     <p>{booking.routeName} - {shortDateTime(booking.departureTime)}</p>
                     <p>{booking.seatIds.join(", ")} - {money(booking.totalAmount)}</p>
-                    {!["CANCELLED", "CHECKED_IN", "COMPLETED"].includes(booking.status) && (
+                    <p className="booking-policy-note"><strong>Chính sách hủy:</strong> {booking.cancellationPolicy}</p>
+                    {booking.status === "CANCELLED" && <p>Hoàn {money(booking.refundAmount)}, phí {money(booking.cancellationFee)}</p>}
+                    {!["CANCELLED", "PARTIALLY_CHECKED_IN", "CHECKED_IN", "COMPLETED"].includes(booking.status) && (
                       <button className="danger-button" onClick={() => cancelBooking(booking)}>
                         <XCircle size={18} /> Hủy booking
                       </button>

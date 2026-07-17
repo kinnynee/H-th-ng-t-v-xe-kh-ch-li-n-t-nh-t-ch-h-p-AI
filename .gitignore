@@ -8,6 +8,7 @@ npm-debug.log*
 tmp/
 data/generated-tickets/
 data/email-log.jsonl
+data/analytics.json
 *.log
 
 # Retired assignment documentation; do not re-add these files.

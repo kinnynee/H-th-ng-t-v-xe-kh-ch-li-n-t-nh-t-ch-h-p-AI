@@ -12,7 +12,9 @@ test("guest booking access capabilities are unguessable and verified without per
 
   assert.ok(token.length >= 32);
   assert.notEqual(hash, token);
-  assert.equal(verifiesGuestAccessToken(token, hash), true);
-  assert.equal(verifiesGuestAccessToken(createGuestAccessToken(), hash), false);
-  assert.equal(verifiesGuestAccessToken("", hash), false);
+  const expiresAt = new Date(Date.now() + 60_000).toISOString();
+  assert.equal(verifiesGuestAccessToken(token, hash, expiresAt), true);
+  assert.equal(verifiesGuestAccessToken(createGuestAccessToken(), hash, expiresAt), false);
+  assert.equal(verifiesGuestAccessToken("", hash, expiresAt), false);
+  assert.equal(verifiesGuestAccessToken(token, hash, new Date(Date.now() - 1).toISOString()), false);
 });

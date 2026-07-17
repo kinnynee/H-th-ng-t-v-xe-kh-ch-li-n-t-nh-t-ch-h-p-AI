@@ -13,7 +13,8 @@ export function hashGuestAccessToken(token) {
   return createHash("sha256").update(token).digest("base64url");
 }
 
-export function verifiesGuestAccessToken(token, expectedHash) {
+export function verifiesGuestAccessToken(token, expectedHash, expiresAt, now = Date.now()) {
+  if (!expiresAt || Date.parse(expiresAt) <= now) return false;
   const actualHash = hashGuestAccessToken(token);
   if (!actualHash || typeof expectedHash !== "string") return false;
   const actual = Buffer.from(actualHash);

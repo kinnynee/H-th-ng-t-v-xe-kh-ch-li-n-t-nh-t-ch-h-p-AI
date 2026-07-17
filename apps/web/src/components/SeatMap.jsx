@@ -34,7 +34,7 @@ function seatGroups(seats, layout) {
 }
 
 /** Visual seat layout while the service remains the source of truth for availability. */
-export default function SeatMap({ busType, seats = [], selected = [], onToggle }) {
+export default function SeatMap({ busType, seats = [], selected = [], onToggle, disabled = false }) {
   const layout = layoutForVehicle(busType);
   const groups = seatGroups(seats, layout);
 
@@ -55,7 +55,7 @@ export default function SeatMap({ busType, seats = [], selected = [], onToggle }
             <div className={`seat-grid seat-grid--${layout.kind}`}>
               {group.seats.map((seat, index) => {
                 const isSelected = selected.includes(seat.id);
-                const selectable = seat.status === "AVAILABLE" || isSelected;
+                const selectable = !disabled && (seat.status === "AVAILABLE" || isSelected);
                 return (
                   <button
                     className={`seat-button ${seat.status.toLowerCase()} ${isSelected ? "selected" : ""}`}

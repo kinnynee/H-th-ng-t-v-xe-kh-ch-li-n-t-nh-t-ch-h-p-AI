@@ -1,7 +1,10 @@
 import express from "express";
 import cors from "cors";
 import { subscribeKafka } from "@bus-ai/shared/broker";
-import { loadState, recordEvent, recordSearch, recordBookingAttempt, recordPaymentSuccess, getEvents, getSummary } from "./store.js";
+import {
+  loadState, recordEvent, recordSearch, recordBookingAttempt, recordPaymentSuccess,
+  recordCancellation, getEvents, getSummary
+} from "./store.js";
 
 const app = express();
 app.use(cors());
@@ -32,6 +35,8 @@ async function main() {
           await recordBookingAttempt();
         } else if (topic === "payment-events" && eventType === "PaymentSucceeded") {
           await recordPaymentSuccess(payload);
+        } else if (topic === "booking-events" && eventType === "BookingCancelled") {
+          await recordCancellation(payload);
         }
       } catch (err) {
         console.error(`[analytics-worker] Error processing event:`, err);

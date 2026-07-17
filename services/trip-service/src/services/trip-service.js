@@ -1,7 +1,7 @@
 import { httpError } from "@bus-ai/shared/http";
 
 /** Domain/business layer: no Express request or response objects are used here. */
-export function createTripService({ stores, locations, operators, cache, repository, publishEvent }) {
+export function createTripService({ stores, locations, operators, cache, repository, publishEvent, now = () => Date.now() }) {
   let cacheEpoch = 0;
 
   const invalidateSearchCache = () => { cacheEpoch += 1; };
@@ -21,7 +21,7 @@ export function createTripService({ stores, locations, operators, cache, reposit
     return [...byCity.values()];
   }
 
-  function matches(trip, query) {
+  function matches(trip, query, nowMs) {
     if (query.from && !fold(trip.from).includes(fold(query.from))) return false;
     if (query.to && !fold(trip.to).includes(fold(query.to))) return false;
     if (query.date && trip.date !== query.date) return false;
@@ -32,6 +32,7 @@ export function createTripService({ stores, locations, operators, cache, reposit
     const hhmm = trip.departureTime.slice(11, 16);
     if (query.timeFrom && hhmm < query.timeFrom) return false;
     if (query.timeTo && hhmm > query.timeTo) return false;
+    if (query.includeInactive !== "true" && Date.parse(trip.departureTime) <= nowMs) return false;
     return trip.status === "ACTIVE" || query.includeInactive === "true";
   }
 
@@ -43,10 +44,11 @@ export function createTripService({ stores, locations, operators, cache, reposit
     return sorted;
   }
 
-  function suggestion(query) {
+  function suggestion(query, nowMs) {
     return [...stores.trips.values()]
       .filter((trip) => (!query.from || fold(trip.from).includes(fold(query.from))) && (!query.to || fold(trip.to).includes(fold(query.to))))
       .filter((trip) => trip.status === "ACTIVE")
+      .filter((trip) => Date.parse(trip.departureTime) > nowMs)
       .sort((left, right) => left.date.localeCompare(right.date))[0]?.date ?? null;
   }
 
@@ -155,11 +157,13 @@ export function createTripService({ stores, locations, operators, cache, reposit
     },
 
     async search(query) {
-      const cacheKey = `trip-search:${cacheEpoch}:${JSON.stringify(query)}`;
+      const nowMs = now();
+      const cacheWindow = query.includeInactive === "true" ? "admin" : Math.floor(nowMs / 60_000);
+      const cacheKey = `trip-search:${cacheEpoch}:${cacheWindow}:${JSON.stringify(query)}`;
       const cached = await cache.get(cacheKey);
       if (cached) return { ...cached, cache: "HIT" };
-      const trips = sortTrips([...stores.trips.values()].filter((trip) => matches(trip, query)), query.sort);
-      const payload = { trips, suggestionDate: trips.length ? null : suggestion(query), cache: "MISS" };
+      const trips = sortTrips([...stores.trips.values()].filter((trip) => matches(trip, query, nowMs)), query.sort);
+      const payload = { trips, suggestionDate: trips.length ? null : suggestion(query, nowMs), cache: "MISS" };
       await cache.set(cacheKey, payload, 60);
       await publishEvent("TripSearchPerformed", { from: query.from ?? "", to: query.to ?? "", date: query.date ?? "", resultCount: trips.length }, "search-events");
       return payload;

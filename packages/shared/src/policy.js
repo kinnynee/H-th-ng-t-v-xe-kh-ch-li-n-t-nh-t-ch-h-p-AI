@@ -1,9 +1,9 @@
 export const cancellationPolicy = `
 Chính sách hủy vé nội bộ:
-- Hủy trước giờ khởi hành 12 tiếng: hoàn 100% với tuyến TP.HCM - Đà Lạt.
-- Hủy trước 6-12 tiếng: phí hủy 30%.
+- Mức hoàn tiền phụ thuộc chính sách được lưu trên từng tuyến và được chốt vào booking lúc đặt vé.
+- Hệ thống tự tính tiền hoàn và phí hủy theo số giờ còn lại trước giờ khởi hành.
 - Hủy sau thời điểm xe đã khởi hành: không hoàn tiền.
-- Vé đã check-in không được hủy.
+- Booking có bất kỳ vé nào đã check-in không được hủy.
 `;
 
 export const checkinPolicy = `

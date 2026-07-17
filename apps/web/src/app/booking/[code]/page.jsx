@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { CheckCircle2, Search, Ticket, XCircle } from "lucide-react";
+import { CheckCircle2, RefreshCw, Search, Ticket, XCircle } from "lucide-react";
 import ChatWidget from "../../../components/ChatWidget";
 import SiteChrome from "../../../components/SiteChrome";
 import { gql, money, openBookingTicket, shortDateTime, storeBookingAccessToken } from "../../../lib/graphql";
@@ -10,10 +10,11 @@ import { gql, money, openBookingTicket, shortDateTime, storeBookingAccessToken }
 const BOOKING = `
 query Booking($code: ID!, $email: String) {
   booking(code: $code, email: $email) {
-    code status routeName departureTime pickup dropoff vehiclePlate customerEmail totalAmount ticketHtmlUrl ticketPdfUrl
+    code status routeName departureTime pickup dropoff vehiclePlate customerEmail totalAmount
+    cancellationPolicy refundAmount cancellationFee ticketHtmlUrl ticketPdfUrl
     seatIds
     passengers { seatId fullName phone email documentId }
-    tickets { id passengerName seatId qrPayload issuedAt }
+    tickets { id passengerName seatId qrPayload issuedAt status checkedInAt }
   }
 }`;
 
@@ -23,6 +24,27 @@ mutation Cancel($code: ID!) {
     code status
   }
 }`;
+
+const REQUEST_GUEST_ACCESS = `
+mutation RequestGuestAccess($code: ID!, $email: String!) {
+  requestGuestBookingAccess(code: $code, email: $email) {
+    guestAccessToken expiresAt
+  }
+}`;
+
+const LIVE_BOOKING_STATUSES = new Set(["PAID", "TICKET_ISSUED", "PARTIALLY_CHECKED_IN"]);
+
+const STATUS_LABELS = {
+  HELD: "Đang giữ ghế",
+  PENDING_PAYMENT: "Chờ thanh toán",
+  PAID: "Đã thanh toán",
+  TICKET_ISSUED: "Đã xuất vé",
+  PARTIALLY_CHECKED_IN: "Đã check-in một phần",
+  CHECKED_IN: "Đã check-in",
+  COMPLETED: "Hoàn thành",
+  CANCELLED: "Đã hủy",
+  EXPIRED: "Đã hết hạn"
+};
 
 export default function BookingPage() {
   const params = useParams();
@@ -36,7 +58,15 @@ export default function BookingPage() {
   async function lookup() {
     setError("");
     try {
-      const data = await gql(BOOKING, { code: lookupCode, email: lookupEmail || undefined }, { bookingCode: lookupCode });
+      let data;
+      try {
+        data = await gql(BOOKING, { code: lookupCode }, { bookingCode: lookupCode });
+      } catch (accessError) {
+        if (!lookupEmail) throw accessError;
+        const access = await gql(REQUEST_GUEST_ACCESS, { code: lookupCode, email: lookupEmail });
+        storeBookingAccessToken(lookupCode, access.requestGuestBookingAccess.guestAccessToken);
+        data = await gql(BOOKING, { code: lookupCode }, { bookingCode: lookupCode });
+      }
       setBooking(data.booking);
     } catch (err) {
       setError(err.message);
@@ -67,6 +97,12 @@ export default function BookingPage() {
     if (lookupCode && accessReady) lookup();
   }, [lookupCode, accessReady]);
 
+  useEffect(() => {
+    if (!accessReady || !lookupCode || !LIVE_BOOKING_STATUSES.has(booking?.status)) return undefined;
+    const timer = window.setInterval(() => lookup(), 10_000);
+    return () => window.clearInterval(timer);
+  }, [accessReady, booking?.status, lookupCode, lookupEmail]);
+
   async function openTicket(url) {
     setError("");
     try {
@@ -78,11 +114,11 @@ export default function BookingPage() {
 
   return (
     <SiteChrome>
-      <main className="page split">
-        <aside className="panel">
+      <main className="page split lookup-layout lookup-page">
+        <aside className="panel lookup-panel">
           <div className="panel-header">
             <h1>Tra cứu vé</h1>
-            <p>Đăng nhập hoặc mở liên kết truy cập an toàn được cấp khi tạo booking.</p>
+            <p>Nhập mã đặt vé và email đã sử dụng để xem vé, trạng thái thanh toán hoặc chính sách hủy.</p>
           </div>
           <div className="panel-body form-grid">
             <label className="field">
@@ -91,7 +127,7 @@ export default function BookingPage() {
                 className="input"
                 value={lookupCode}
                 readOnly={code !== "demo"}
-                onChange={(event) => setLookupCode(event.target.value)}
+                onChange={(event) => { setError(""); setLookupCode(event.target.value); }}
                 placeholder="BK260617ABCD"
               />
             </label>
@@ -101,7 +137,7 @@ export default function BookingPage() {
                 className="input"
                 type="email"
                 value={lookupEmail}
-                onChange={(event) => setLookupEmail(event.target.value)}
+                onChange={(event) => { setError(""); setLookupEmail(event.target.value); }}
                 placeholder="guest@example.com"
               />
             </label>
@@ -113,7 +149,7 @@ export default function BookingPage() {
         </aside>
 
         <section className="stack">
-          {!booking && <div className="empty">Vé sẽ hiển thị sau khi tra cứu thành công.</div>}
+          {!booking && <div className="empty lookup-empty"><Ticket size={30} /><strong>Thông tin vé của bạn</strong><span>Vé sẽ hiển thị sau khi tra cứu thành công.</span></div>}
           {booking && (
             <div className="panel">
               <div className="panel-header">
@@ -122,28 +158,45 @@ export default function BookingPage() {
               </div>
               <div className="panel-body stack">
                 <div className="meta-row">
-                  <span className="badge status">{booking.status}</span>
+                  <span className="badge status">{STATUS_LABELS[booking.status] ?? booking.status}</span>
                   <span>{shortDateTime(booking.departureTime)}</span>
                   <span>{money(booking.totalAmount)}</span>
+                  {LIVE_BOOKING_STATUSES.has(booking.status) && (
+                    <button className="ghost-button" onClick={lookup}>
+                      <RefreshCw size={16} /> Cập nhật trạng thái
+                    </button>
+                  )}
                 </div>
                 <div className="ticket-card">
                   <p>Điểm đón: {booking.pickup}</p>
                   <p>Điểm trả: {booking.dropoff}</p>
                   <p>Biển số xe: {booking.vehiclePlate}</p>
                 </div>
+                <div className="policy-inline-card">
+                  <strong>Chính sách hủy áp dụng cho vé này</strong>
+                  <p>{booking.cancellationPolicy}</p>
+                </div>
+                {booking.status === "CANCELLED" && (
+                  <div className="ticket-card">
+                    <p>Hoàn lại: {money(booking.refundAmount)}</p>
+                    <p>Phí hủy: {money(booking.cancellationFee)}</p>
+                  </div>
+                )}
                 <div className="trip-list">
                   {booking.tickets.map((ticket) => (
                     <article className="ticket-card" key={ticket.id}>
-                      <span className="badge status-good">
-                        <Ticket size={14} /> Vé điện tử
+                      <span className={`badge ${ticket.status === "CANCELLED" ? "status-bad" : "status-good"}`}>
+                        {ticket.status === "CANCELLED" ? <XCircle size={14} /> : <Ticket size={14} />}
+                        {ticket.status === "CANCELLED" ? "Vé đã hủy" : "Vé điện tử"}
                       </span>
                       <h3>{ticket.id}</h3>
                       <p>{ticket.passengerName}, ghế {ticket.seatId}</p>
                       <p className="muted">QR mô phỏng: {ticket.qrPayload}</p>
+                      <span className="badge status">{STATUS_LABELS[ticket.status] ?? ticket.status}</span>
                     </article>
                   ))}
                 </div>
-                {!["CANCELLED", "CHECKED_IN", "COMPLETED"].includes(booking.status) && (
+                {!["CANCELLED", "PARTIALLY_CHECKED_IN", "CHECKED_IN", "COMPLETED"].includes(booking.status) && (
                   <button className="danger-button" onClick={cancel}>
                     <XCircle size={18} /> Hủy booking
                   </button>
@@ -153,7 +206,7 @@ export default function BookingPage() {
                     <CheckCircle2 size={14} /> Sẵn sàng check-in
                   </span>
                 )}
-                {booking.tickets.length > 0 && (
+                {booking.tickets.length > 0 && booking.status !== "CANCELLED" && (
                   <div className="two-cols">
                     <button className="ghost-button" onClick={() => openTicket(booking.ticketHtmlUrl)}>Mở vé HTML</button>
                     <button className="ghost-button" onClick={() => openTicket(booking.ticketPdfUrl)}>Mở vé PDF</button>
