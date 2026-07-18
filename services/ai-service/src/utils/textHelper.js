@@ -58,3 +58,12 @@ export function isTripSearchIntent(message) {
 
   return Boolean(route.from || route.to) && (hasTripKeyword || text.includes("mai") || text.includes("hom nay") || text.includes("ngay kia"));
 }
+
+export function isCancellationIntent(message) {
+  const text = fold(message);
+  return /\bhuy\b/.test(text)
+    || text.includes("doi ve")
+    || text.includes("hoan tien")
+    || text.includes("hoan lai")
+    || text.includes("phi huy");
+}

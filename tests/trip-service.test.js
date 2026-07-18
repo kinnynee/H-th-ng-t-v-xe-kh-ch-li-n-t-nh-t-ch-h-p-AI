@@ -50,9 +50,11 @@ test("trip application service owns validation, persistence and search caching",
 });
 
 test("customer searches hide departed trips while admin searches retain them", async () => {
-  const nowMs = Date.parse("2026-07-17T17:00:00+07:00");
+  const seededTrip = buildTrips()[0];
+  assert.ok(seededTrip);
+  const nowMs = Date.parse(seededTrip.departureTime) + 60_000;
   const { service } = serviceFixture({ now: () => nowMs });
-  const query = { from: "TP.HCM", to: "Đà Lạt", date: "2026-07-17" };
+  const query = { from: seededTrip.from, to: seededTrip.to, date: seededTrip.departureTime.slice(0, 10) };
   const customerSearch = await service.search(query);
   const adminSearch = await service.search({ ...query, includeInactive: "true" });
   assert.equal(customerSearch.trips.every((trip) => Date.parse(trip.departureTime) > nowMs), true);

@@ -7,6 +7,8 @@ coverage/
 npm-debug.log*
 tmp/
 data/generated-tickets/
+data/emails/
+data/processed-events/
 data/email-log.jsonl
 data/analytics.json
 *.log

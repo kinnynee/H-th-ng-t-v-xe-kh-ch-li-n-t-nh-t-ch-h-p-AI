@@ -98,6 +98,8 @@ Tra cứu booking yêu cầu đồng thời mã booking và đúng email đặt 
 
 ```bash
 npm test
+npm run test:seat-race
+npm run test:seat-race:repeat
 npm run build -w apps/web
 npm run docker:config
 ```

@@ -14,7 +14,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-bus}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bus_dev_password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bus}
       POSTGRES_DB: postgres
     ports:
       - "5432:5432"
@@ -82,15 +82,26 @@ services:
     networks:
       - bus-network
 
+  db-setup:
+    <<: *app-build
+    restart: "no"
+    command: node scripts/ensure-databases.js
+    environment:
+      DATABASE_ADMIN_URL: postgresql://${POSTGRES_USER:-bus}:${POSTGRES_PASSWORD:-bus}@postgres:5432/postgres
+      DATABASE_NAMES: trip_db,booking_db,seat_db,analytics_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   trip-migrate:
     <<: *app-build
     restart: "no"
     command: sh -c "npm run db:migrate -w services/trip-service && npm run db:seed -w services/trip-service"
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-bus}:${POSTGRES_PASSWORD:-bus_dev_password}@postgres:5432/trip_db
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bus}:${POSTGRES_PASSWORD:-bus}@postgres:5432/trip_db
     depends_on:
-      postgres:
-        condition: service_healthy
+      db-setup:
+        condition: service_completed_successfully
 
   booking-migrate:
     <<: *app-build
@@ -98,30 +109,30 @@ services:
     command: sh -c "npm run db:migrate -w services/booking-service && npm run db:seed -w services/booking-service"
     environment:
       NODE_ENV: ${NODE_ENV:-development}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-bus}:${POSTGRES_PASSWORD:-bus_dev_password}@postgres:5432/booking_db
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bus}:${POSTGRES_PASSWORD:-bus}@postgres:5432/booking_db
     depends_on:
-      postgres:
-        condition: service_healthy
+      db-setup:
+        condition: service_completed_successfully
 
   seat-migrate:
     <<: *app-build
     restart: "no"
     command: sh -c "npm run db:migrate -w services/seat-service && npm run db:seed -w services/seat-service"
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-bus}:${POSTGRES_PASSWORD:-bus_dev_password}@postgres:5432/seat_db
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bus}:${POSTGRES_PASSWORD:-bus}@postgres:5432/seat_db
     depends_on:
-      postgres:
-        condition: service_healthy
+      db-setup:
+        condition: service_completed_successfully
 
   analytics-migrate:
     <<: *app-build
     restart: "no"
     command: sh -c "npm run db:migrate -w workers/analytics-worker && npm run db:seed -w workers/analytics-worker"
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-bus}:${POSTGRES_PASSWORD:-bus_dev_password}@postgres:5432/analytics_db
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bus}:${POSTGRES_PASSWORD:-bus}@postgres:5432/analytics_db
     depends_on:
-      postgres:
-        condition: service_healthy
+      db-setup:
+        condition: service_completed_successfully
 
   web:
     <<: *app-build
@@ -152,6 +163,9 @@ services:
       ANALYTICS_SERVICE_URL: http://analytics-worker:4050
       GATEWAY_GRPC_BIND: 0.0.0.0:50054
       AUTH_SECRET: ${AUTH_SECRET:-local-development-secret-change-before-production}
+      GRAPHQL_ALLOWED_ORIGINS: ${GRAPHQL_ALLOWED_ORIGINS:-http://localhost,http://localhost:3000,http://localhost:3001}
+      GRAPHQL_RATE_LIMIT: ${GRAPHQL_RATE_LIMIT:-120}
+      ALLOW_GRAPHQL_INTROSPECTION: ${ALLOW_GRAPHQL_INTROSPECTION:-false}
     ports:
       - "4001:4000"
       - "50054:50054"
@@ -179,7 +193,7 @@ services:
       NODE_ENV: ${NODE_ENV:-development}
       REDIS_URL: redis://redis:6379
       KAFKA_BROKERS: kafka:9092
-      DATABASE_URL: postgresql://${POSTGRES_USER:-bus}:${POSTGRES_PASSWORD:-bus_dev_password}@postgres:5432/trip_db
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bus}:${POSTGRES_PASSWORD:-bus}@postgres:5432/trip_db
       TRIP_GRPC_BIND: 0.0.0.0:50052
       AUTH_SECRET: ${AUTH_SECRET:-local-development-secret-change-before-production}
     ports:
@@ -208,7 +222,7 @@ services:
       REDIS_URL: redis://redis:6379
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       SEAT_GRPC_BIND: 0.0.0.0:50051
-      DATABASE_URL: postgresql://${POSTGRES_USER:-bus}:${POSTGRES_PASSWORD:-bus_dev_password}@postgres:5432/seat_db
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bus}:${POSTGRES_PASSWORD:-bus}@postgres:5432/seat_db
       AUTH_SECRET: ${AUTH_SECRET:-local-development-secret-change-before-production}
     ports:
       - "50051:50051"
@@ -236,11 +250,12 @@ services:
       TRIP_SERVICE_URL: http://trip-service:4010
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       KAFKA_BROKERS: kafka:9092
-      DATABASE_URL: postgresql://${POSTGRES_USER:-bus}:${POSTGRES_PASSWORD:-bus_dev_password}@postgres:5432/booking_db
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bus}:${POSTGRES_PASSWORD:-bus}@postgres:5432/booking_db
       BOOKING_GRPC_BIND: 0.0.0.0:50053
       AUTH_SECRET: ${AUTH_SECRET:-local-development-secret-change-before-production}
       PENDING_PAYMENT_TTL_SECONDS: 900
       GUEST_ACCESS_TTL_SECONDS: 1800
+      PAYMENT_CALLBACK_SECRET: ${PAYMENT_CALLBACK_SECRET:-local-payment-callback-secret-change-me}
     ports:
       - "4020:4020"
       - "50053:50053"
@@ -288,7 +303,7 @@ services:
     environment:
       NODE_ENV: ${NODE_ENV:-development}
       KAFKA_BROKERS: kafka:9092
-      DATABASE_URL: postgresql://${POSTGRES_USER:-bus}:${POSTGRES_PASSWORD:-bus_dev_password}@postgres:5432/analytics_db
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bus}:${POSTGRES_PASSWORD:-bus}@postgres:5432/analytics_db
       AUTH_SECRET: ${AUTH_SECRET:-local-development-secret-change-before-production}
     ports:
       - "4050:4050"
@@ -310,6 +325,8 @@ services:
     command: npm run dev -w workers/ticket-worker
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      RABBITMQ_MAX_RETRIES: ${RABBITMQ_MAX_RETRIES:-3}
+      RABBITMQ_RETRY_DELAY_MS: ${RABBITMQ_RETRY_DELAY_MS:-500}
       DATA_DIR: /app/data
     volumes:
       - ./data:/app/data
@@ -322,6 +339,8 @@ services:
     command: npm run dev -w workers/email-worker
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      RABBITMQ_MAX_RETRIES: ${RABBITMQ_MAX_RETRIES:-3}
+      RABBITMQ_RETRY_DELAY_MS: ${RABBITMQ_RETRY_DELAY_MS:-500}
       DATA_DIR: /app/data
       SMTP_URL: ${SMTP_URL:-}
       SMTP_FROM: ${SMTP_FROM:-no-reply@bus-ai.local}

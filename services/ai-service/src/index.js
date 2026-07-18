@@ -4,9 +4,15 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assistantSystemPrompt, cancellationPolicy, checkinPolicy } from "@bus-ai/shared/policy";
-import { isoDate } from "@bus-ai/shared/seed";
 import { errorHandler, notFoundHandler } from "@bus-ai/shared/http";
 import { createLogger, registerProcessErrorHandlers, requestLoggingMiddleware } from "@bus-ai/shared/logger";
+import {
+  createKnownIntentHandler,
+  createSecureBookingLookup,
+  executeToolSafely,
+  generalGuidanceResponse,
+  policySourcesForMessage
+} from "./assistant-domain.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -47,13 +53,6 @@ app.use(express.json());
 const tripUrl = process.env.TRIP_SERVICE_URL || "http://localhost:4010";
 const bookingUrl = process.env.BOOKING_SERVICE_URL || "http://localhost:4020";
 
-function fold(value) {
-  return String(value ?? "")
-    .toLocaleLowerCase("vi-VN")
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "");
-}
-
 async function requestJSON(url, options = {}) {
   const response = await fetch(url, {
     ...options,
@@ -74,108 +73,17 @@ async function searchTrips({ from = "", to = "", date = "", timeFrom = "" }) {
   return requestJSON(`${tripUrl}/trips?${params}`);
 }
 
-async function getBookingStatus({ bookingCode }, accessHeaders = {}) {
-  if (!bookingCode) return { error: "Cần mã booking để tra cứu thông tin." };
-  try {
-    return await requestJSON(`${bookingUrl}/bookings/${bookingCode}`, { headers: accessHeaders });
-  } catch {
-    return { error: "Bạn cần đăng nhập hoặc mở liên kết truy cập an toàn của booking này." };
-  }
+const getBookingStatus = createSecureBookingLookup({ requestJSON, bookingUrl });
+const handleKnownIntent = createKnownIntentHandler({ searchTrips, getBookingStatus });
+
+async function fallbackAssistant(input) {
+  return (await handleKnownIntent(input)) ?? generalGuidanceResponse();
 }
 
-function routeFromText(message) {
-  const text = fold(message);
-  const from = text.includes("sai gon") || text.includes("tp.hcm") || text.includes("hcm") ? "TP.HCM" : "";
-  let to = "";
-  if (text.includes("da lat")) to = "Đà Lạt";
-  else if (text.includes("nha trang")) to = "Nha Trang";
-  else if (text.includes("can tho")) to = "Cần Thơ";
-  else if (text.includes("ha noi")) to = "Hà Nội";
-  else if (text.includes("da nang")) to = "Đà Nẵng";
-  return { from, to };
-}
-
-function dateFromText(message) {
-  const text = fold(message);
-  if (text.includes("ngay kia")) return isoDate(2);
-  if (text.includes("mai")) return isoDate(1);
-  if (text.includes("hom nay")) return isoDate(0);
-  return isoDate(0);
-}
-
-function isTripSearchIntent(message) {
-  const text = fold(message);
-  const route = routeFromText(message);
-  const hasTripKeyword = ["chuyen", "xe", "khung gio", "gio nao", "may gio", "luc nao", "thoi gian"]
-    .some((keyword) => text.includes(keyword));
-  return Boolean(route.from || route.to) && (hasTripKeyword || text.includes("mai") || text.includes("hom nay") || text.includes("ngay kia"));
-}
-
-function tripSearchAnswer(result, date) {
-  if (result.trips.length === 0) {
-    return {
-      answer: result.suggestionDate
-        ? `Chưa có chuyến phù hợp ngày ${date}. Ngày gần nhất có chuyến là ${result.suggestionDate}.`
-        : "Chưa có chuyến phù hợp với yêu cầu này.",
-      sources: [],
-      toolCalls: ["searchTrips"]
-    };
-  }
-  const lines = result.trips.slice(0, 3).map((trip) => {
-    const time = trip.departureTime.slice(11, 16);
-    return `${time} ${trip.from} đi ${trip.to}, ${trip.operatorName}, ${trip.busType}, ${trip.price.toLocaleString("vi-VN")}đ`;
-  });
-  return {
-    answer: `Mình tìm thấy ${result.trips.length} chuyến. Gợi ý tốt nhất: ${lines.join("; ")}.`,
-    sources: [],
-    toolCalls: ["searchTrips"]
-  };
-}
-
-async function answerTripSearch(message) {
-  const route = routeFromText(message);
-  const text = fold(message);
-  const date = dateFromText(message);
-  return tripSearchAnswer(await searchTrips({ ...route, date, timeFrom: text.includes("toi") ? "18:00" : "" }), date);
-}
-
-async function fallbackAssistant({ message, bookingCode }, accessHeaders) {
-  const text = fold(message);
-  const sources = [];
-  const toolCalls = [];
-
-  if (text.includes("huy") || text.includes("doi ve") || text.includes("hoan tien")) {
-    sources.push("bus://policy/cancellation");
-    return { answer: "Theo chính sách hủy vé nội bộ: hủy trước 12 tiếng có thể được hoàn 100% tùy tuyến; sau khi xe khởi hành hoặc vé đã check-in thì không hoàn tiền.", sources, toolCalls };
-  }
-  if (text.includes("check in") || text.includes("len xe")) {
-    sources.push("bus://policy/checkin");
-    return { answer: "Theo hướng dẫn check-in: hành khách nên có mặt trước giờ khởi hành 30 phút và xuất trình mã booking hoặc QR mô phỏng trên vé điện tử.", sources, toolCalls };
-  }
-  if (text.includes("booking") || bookingCode) {
-    toolCalls.push("getBookingStatus");
-    const status = await getBookingStatus({ bookingCode }, accessHeaders);
-    if (status.error) return { answer: status.error, sources, toolCalls };
-    const booking = status.booking;
-    return { answer: `Booking ${booking.code} đang ở trạng thái ${booking.status}, tuyến ${booking.routeName}, tổng tiền ${booking.totalAmount.toLocaleString("vi-VN")}đ.`, sources, toolCalls };
-  }
-  const route = routeFromText(message);
-  if (route.from || route.to || text.includes("xe") || text.includes("chuyen")) {
-    toolCalls.push("searchTrips");
-    const date = dateFromText(message);
-    const result = await searchTrips({ ...route, date, timeFrom: text.includes("toi") ? "18:00" : "" });
-    return { ...tripSearchAnswer(result, date), sources, toolCalls };
-  }
-  return {
-    answer: "Bạn có thể tìm chuyến, chọn ghế, nhập thông tin hành khách, thanh toán mô phỏng rồi nhận vé điện tử. Mình cũng có thể tra cứu booking mà bạn đang được cấp quyền truy cập.",
-    sources,
-    toolCalls
-  };
-}
-
-async function aiSdkAssistant(input, accessHeaders) {
-  if (!process.env.OPENAI_API_KEY) return fallbackAssistant(input, accessHeaders);
-  if (isTripSearchIntent(input.message)) return answerTripSearch(input.message);
+async function aiSdkAssistant(input = {}) {
+  const knownResponse = await handleKnownIntent(input);
+  if (knownResponse) return knownResponse;
+  if (!process.env.OPENAI_API_KEY) return generalGuidanceResponse();
   try {
     const [{ generateText, tool }, { openai }, { z }] = await Promise.all([
       import("ai"), import("@ai-sdk/openai"), import("zod")
@@ -183,29 +91,35 @@ async function aiSdkAssistant(input, accessHeaders) {
     const result = await generateText({
       model: openai(process.env.OPENAI_MODEL || "gpt-4.1-mini"),
       system: `${assistantSystemPrompt}\n${cancellationPolicy}\n${checkinPolicy}`,
-      prompt: input.message,
+      prompt: String(input.message ?? ""),
       maxSteps: 3,
       tools: {
         searchTrips: tool({
-          description: "Tìm chuyến xe theo điểm đi, điểm đến, ngày và giờ.",
+          description: "Tìm chuyến xe bằng dữ liệu trực tiếp từ Trip Service. Chỉ sử dụng dữ liệu tool trả về, không tự tạo chuyến.",
           parameters: z.object({ from: z.string().optional(), to: z.string().optional(), date: z.string().optional(), timeFrom: z.string().optional() }),
-          execute: searchTrips
+          execute: (request) => executeToolSafely("searchTrips", () => searchTrips(request))
         }),
         getBookingStatus: tool({
-          description: "Tra cứu trạng thái booking khi người dùng đang được cấp quyền truy cập.",
-          parameters: z.object({ bookingCode: z.string() }),
-          execute: (request) => getBookingStatus(request, accessHeaders)
+          description: "Tra cứu booking chỉ sau khi xác minh cả mã booking và đúng email đặt vé. Không tiết lộ hoặc tự tạo dữ liệu booking.",
+          parameters: z.object({ bookingCode: z.string(), email: z.string().email() }),
+          execute: () => executeToolSafely("getBookingStatus", () => getBookingStatus({
+            bookingCode: input.bookingCode,
+            email: input.email
+          }))
         })
       }
     });
+    const toolCalls = result.toolCalls?.map((call) => call.toolName) ?? [];
+    const sources = policySourcesForMessage(input.message);
     return {
-      answer: result.text,
-      sources: ["bus://policy/cancellation", "bus://policy/checkin"],
-      toolCalls: result.toolCalls?.map((call) => call.toolName) ?? []
+      answer: result.text || generalGuidanceResponse().answer,
+      sources,
+      toolCalls,
+      dataOrigin: toolCalls.length ? "LIVE_TOOL_DATA" : sources.length ? "INTERNAL_POLICY" : "AI_GUIDANCE"
     };
   } catch (error) {
     logger.warn("ai_sdk_fallback", { error });
-    return fallbackAssistant(input, accessHeaders);
+    return fallbackAssistant(input);
   }
 }
 
@@ -215,13 +129,14 @@ app.get("/health", (_req, res) => {
 
 app.post("/chat", async (req, res) => {
   try {
-    const accessHeaders = {
-      ...(req.get("authorization") ? { authorization: req.get("authorization") } : {}),
-      ...(req.get("x-booking-access-token") ? { "x-booking-access-token": req.get("x-booking-access-token") } : {})
-    };
-    res.json(await aiSdkAssistant(req.body, accessHeaders));
+    res.json(await aiSdkAssistant(req.body ?? {}));
   } catch (error) {
-    res.status(500).json({ answer: error.message, sources: [], toolCalls: [] });
+    logger.error("assistant_request_failed", { error });
+    res.json({
+      ...generalGuidanceResponse(),
+      answer: "Chatbot tạm thời không thể xử lý yêu cầu. Vui lòng thử lại sau.",
+      dataOrigin: "TOOL_ERROR"
+    });
   }
 });
 

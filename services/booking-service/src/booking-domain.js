@@ -1,14 +1,22 @@
 const transitions = new Map([
-  ["PENDING_PAYMENT", new Set(["PAID", "PAYMENT_FAILED", "CANCELLED", "EXPIRED"])],
+  ["PENDING_PAYMENT", new Set(["PAYMENT_PROCESSING", "CANCELLED", "EXPIRED"])],
+  ["PAYMENT_PROCESSING", new Set(["PENDING_PAYMENT", "PAID", "PAYMENT_FAILED"])],
   ["PAID", new Set(["TICKET_ISSUED", "CANCELLED"])],
   ["TICKET_ISSUED", new Set(["PARTIALLY_CHECKED_IN", "CHECKED_IN", "CANCELLED"])],
-  ["PARTIALLY_CHECKED_IN", new Set(["CHECKED_IN"])]
+  ["PARTIALLY_CHECKED_IN", new Set(["CHECKED_IN"])],
+  ["CHECKED_IN", new Set(["COMPLETED"])]
 ]);
 
-export function transitionBooking(booking, nextStatus, at = new Date()) {
-  if (!transitions.get(booking.status)?.has(nextStatus)) {
-    throw new Error(`Cannot transition booking from ${booking.status} to ${nextStatus}`);
+export function assertBookingStatusTransition(currentStatus, nextStatus, { allowSame = false } = {}) {
+  if (allowSame && currentStatus === nextStatus) return true;
+  if (!transitions.get(currentStatus)?.has(nextStatus)) {
+    throw new Error(`Cannot transition booking from ${currentStatus} to ${nextStatus}`);
   }
+  return true;
+}
+
+export function transitionBooking(booking, nextStatus, at = new Date()) {
+  assertBookingStatusTransition(booking.status, nextStatus);
   booking.status = nextStatus;
   booking.updatedAt = at.toISOString();
   return booking;
@@ -19,11 +27,11 @@ function fold(value) {
 }
 
 export function cancellationQuote({ status, totalAmount, departureTime, cancellationPolicy, now = new Date() }) {
-  if (status === "PENDING_PAYMENT") return { refundPercent: 0, refundAmount: 0, cancellationFee: 0 };
   const hoursBeforeDeparture = (Date.parse(departureTime) - now.getTime()) / 3_600_000;
   if (!Number.isFinite(hoursBeforeDeparture) || hoursBeforeDeparture <= 0) {
     throw new Error("Cannot cancel a booking after the trip has departed");
   }
+  if (status === "PENDING_PAYMENT") return { refundPercent: 0, refundAmount: 0, cancellationFee: 0 };
 
   const policy = fold(cancellationPolicy);
   const rules = [];
@@ -44,6 +52,15 @@ export function cancellationQuote({ status, totalAmount, departureTime, cancella
     refundPercent,
     refundAmount,
     cancellationFee: Math.max(0, Number(totalAmount) - refundAmount)
+  };
+}
+
+export function seatReleaseCommand(booking) {
+  const confirmed = ["PAID", "TICKET_ISSUED", "PARTIALLY_CHECKED_IN", "CHECKED_IN", "COMPLETED"].includes(booking.status);
+  return {
+    tripId: booking.tripId,
+    seatIds: [...(booking.seatIds ?? [])],
+    holdToken: confirmed ? booking.code : booking.holdToken
   };
 }
 

@@ -20,6 +20,11 @@ export function eventEnvelope(eventType, payload, correlationId) {
   };
 }
 
+export function rabbitFailureAction(retryCount, maxRetries, hasDurableQueue = true) {
+  if (!hasDurableQueue) return "drop";
+  return Number(retryCount) < Number(maxRetries) ? "retry" : "dead-letter";
+}
+
 async function getRabbitChannel() {
   if (!process.env.RABBITMQ_URL) return null;
   if (rabbitState.channel) return rabbitState.channel;
@@ -67,6 +72,14 @@ export async function subscribeRabbit(queueName, bindingKeys, handler, queueOpti
         exclusive: queueOptions.exclusive ?? false,
         autoDelete: queueOptions.autoDelete ?? false
       });
+      const maxRetries = Math.max(0, Number(queueOptions.maxRetries ?? process.env.RABBITMQ_MAX_RETRIES ?? 3));
+      const retryDelayMs = Math.max(0, Number(queueOptions.retryDelayMs ?? process.env.RABBITMQ_RETRY_DELAY_MS ?? 500));
+      const deadLetterExchange = "bus.events.dlx";
+      if (queueName && (queueOptions.durable ?? true)) {
+        await channel.assertExchange(deadLetterExchange, "direct", { durable: true });
+        const deadQueue = await channel.assertQueue(`${queueName}.dead`, { durable: true });
+        await channel.bindQueue(deadQueue.queue, deadLetterExchange, queueName);
+      }
       for (const key of bindingKeys) {
         await channel.bindQueue(queue.queue, "bus.events", key);
       }
@@ -78,7 +91,38 @@ export async function subscribeRabbit(queueName, bindingKeys, handler, queueOpti
           channel.ack(message);
         } catch (error) {
           console.error(`[rabbit] handler failed for ${queueName}:`, error);
-          channel.nack(message, false, false);
+          const retryCount = Number(message.properties.headers?.["x-retry-count"] ?? 0);
+          try {
+            const action = rabbitFailureAction(retryCount, maxRetries, Boolean(queueName));
+            if (action === "retry") {
+              if (retryDelayMs) await new Promise((resolve) => setTimeout(resolve, retryDelayMs * (2 ** retryCount)));
+              channel.publish("bus.events", message.fields.routingKey, message.content, {
+                ...message.properties,
+                persistent: true,
+                headers: { ...(message.properties.headers ?? {}), "x-retry-count": retryCount + 1 }
+              });
+              await channel.waitForConfirms();
+              channel.ack(message);
+            } else if (action === "dead-letter") {
+              channel.publish(deadLetterExchange, queueName, message.content, {
+                ...message.properties,
+                persistent: true,
+                headers: {
+                  ...(message.properties.headers ?? {}),
+                  "x-retry-count": retryCount,
+                  "x-failure-reason": String(error?.message ?? error).slice(0, 500),
+                  "x-original-routing-key": message.fields.routingKey
+                }
+              });
+              await channel.waitForConfirms();
+              channel.ack(message);
+            } else {
+              channel.nack(message, false, false);
+            }
+          } catch (publishError) {
+            console.error(`[rabbit] retry/dead-letter publish failed for ${queueName}:`, publishError);
+            channel.nack(message, false, true);
+          }
         }
       });
       console.log(`[rabbit] ${queue.queue} subscribed to ${bindingKeys.join(", ")}`);

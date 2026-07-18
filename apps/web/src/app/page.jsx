@@ -1,11 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, Bus, CalendarDays, Clock3, Headphones, MapPin, Search, ShieldCheck, SlidersHorizontal, Ticket, UsersRound, Zap } from "lucide-react";
 import ChatWidget from "../components/ChatWidget";
 import SiteChrome from "../components/SiteChrome";
 import { gql, money, shortDateTime, todayISO } from "../lib/graphql";
+import {
+  hasAdvancedSearch,
+  SEARCH_FORM_FIELDS,
+  searchFormFromSearch,
+  searchFormUrl
+} from "../lib/search-url";
 
 const CATALOG = `
 query Catalog {
@@ -29,19 +35,13 @@ query Search($input: SearchTripsInput!) {
   }
 }`;
 
-const SEARCH_FORM_FIELDS = [
-  "from", "to", "date", "sort", "timeFrom", "timeTo",
-  "maxPrice", "operator", "busType", "minSeats"
-];
-
 function submittedSearchForm(formElement, currentForm) {
   const data = new FormData(formElement);
   return Object.fromEntries(SEARCH_FORM_FIELDS.map((key) => [key, String(data.get(key) ?? currentForm[key] ?? "")]));
 }
 
-export default function HomePage() {
-  const [catalog, setCatalog] = useState({ locations: [], operators: [], vehicles: [], routes: [] });
-  const [form, setForm] = useState({
+function defaultSearchForm() {
+  return {
     from: "TP.HCM",
     to: "Đà Lạt",
     date: todayISO(0),
@@ -52,11 +52,17 @@ export default function HomePage() {
     operator: "",
     busType: "",
     minSeats: ""
-  });
+  };
+}
+
+export default function HomePage() {
+  const [catalog, setCatalog] = useState({ locations: [], operators: [], vehicles: [], routes: [] });
+  const [form, setForm] = useState(defaultSearchForm);
   const [result, setResult] = useState({ trips: [], suggestionDate: null, cache: "" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const searchRequestRef = useRef(0);
 
   const locationNames = useMemo(
     () => [...new Set(catalog.locations.flatMap((item) => [item.name, ...(item.stations ?? [])]))],
@@ -69,6 +75,7 @@ export default function HomePage() {
   }
 
   async function search(nextForm = form) {
+    const requestId = ++searchRequestRef.current;
     setLoading(true);
     setError("");
     try {
@@ -78,17 +85,46 @@ export default function HomePage() {
         minSeats: nextForm.minSeats ? Number(nextForm.minSeats) : undefined
       };
       const data = await gql(SEARCH, { input });
-      setResult(data.searchTrips);
+      if (requestId === searchRequestRef.current) setResult(data.searchTrips);
     } catch (err) {
-      setError(err.message);
+      if (requestId === searchRequestRef.current) setError(err.message);
     } finally {
-      setLoading(false);
+      if (requestId === searchRequestRef.current) setLoading(false);
     }
   }
 
+  function writeSearchUrl(nextForm, mode = "push") {
+    const nextUrl = searchFormUrl(window.location.pathname, nextForm);
+    const currentUrl = `${window.location.pathname}${window.location.search}`;
+    if (nextUrl === currentUrl) return;
+    window.history[`${mode}State`]({ searchForm: nextForm }, "", nextUrl);
+  }
+
+  function applySearch(nextForm, mode = "push") {
+    setForm(nextForm);
+    setShowAdvanced(hasAdvancedSearch(nextForm));
+    writeSearchUrl(nextForm, mode);
+    search(nextForm);
+  }
+
   useEffect(() => {
+    const defaults = defaultSearchForm();
+    const initialForm = searchFormFromSearch(window.location.search, defaults);
+    setForm(initialForm);
+    setShowAdvanced(hasAdvancedSearch(initialForm));
+    writeSearchUrl(initialForm, "replace");
     loadCatalog().catch((err) => setError(err.message));
-    search().catch((err) => setError(err.message));
+    search(initialForm).catch((err) => setError(err.message));
+
+    function restoreSearchFromHistory() {
+      const restoredForm = searchFormFromSearch(window.location.search, defaults);
+      setForm(restoredForm);
+      setShowAdvanced(hasAdvancedSearch(restoredForm));
+      search(restoredForm).catch((err) => setError(err.message));
+    }
+
+    window.addEventListener("popstate", restoreSearchFromHistory);
+    return () => window.removeEventListener("popstate", restoreSearchFromHistory);
   }, []);
 
   function update(key, value) {
@@ -97,8 +133,7 @@ export default function HomePage() {
 
   function choosePopularRoute(route) {
     const nextForm = { ...form, from: route.from, to: route.to };
-    setForm(nextForm);
-    search(nextForm);
+    applySearch(nextForm);
     window.requestAnimationFrame(() => document.querySelector(".results-area")?.scrollIntoView({ behavior: "smooth", block: "start" }));
   }
 
@@ -130,8 +165,7 @@ export default function HomePage() {
               onSubmit={(event) => {
                 event.preventDefault();
                 const nextForm = submittedSearchForm(event.currentTarget, form);
-                setForm(nextForm);
-                search(nextForm);
+                applySearch(nextForm);
               }}
             >
               <datalist id="locations">

@@ -3,17 +3,17 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { cancellationPolicy, checkinPolicy } from "@bus-ai/shared/policy";
 import { startGrpcServer } from "@bus-ai/shared/grpc";
-import { issueAccessToken } from "@bus-ai/shared/auth";
 import { createHealthCheck } from "./health.js";
+import { protectedRequestHeaders, requireBookingCredential } from "./access.js";
 
 const tripUrl = process.env.TRIP_SERVICE_URL || "http://localhost:4010";
 const bookingUrl = process.env.BOOKING_SERVICE_URL || "http://localhost:4020";
 const analyticsUrl = process.env.ANALYTICS_SERVICE_URL || "http://localhost:4050";
 
-async function requestJSON(url) {
+async function requestJSON(url, { userAccessToken = "", bookingAccessToken = "" } = {}) {
   const response = await fetch(url, {
     headers: {
-      authorization: `Bearer ${issueAccessToken({ id: "mcp-server", role: "ADMIN", email: "mcp@internal" })}`
+      ...protectedRequestHeaders({ userAccessToken, bookingAccessToken })
     }
   });
   const payload = await response.json().catch(() => ({}));
@@ -53,26 +53,27 @@ server.tool("get_trip_detail", { tripId: z.string() }, async ({ tripId }) => {
 
 server.tool(
   "get_booking_status",
-  { bookingCode: z.string() },
-  async ({ bookingCode }) => {
-    return textContent(await requestJSON(`${bookingUrl}/bookings/${bookingCode}`));
+  {
+    bookingCode: z.string(),
+    userAccessToken: z.string().min(20).optional(),
+    bookingAccessToken: z.string().min(20).optional()
+  },
+  async ({ bookingCode, userAccessToken = "", bookingAccessToken = "" }) => {
+    requireBookingCredential({ userAccessToken, bookingAccessToken });
+    return textContent(await requestJSON(`${bookingUrl}/bookings/${encodeURIComponent(bookingCode)}`, {
+      userAccessToken,
+      bookingAccessToken
+    }));
   }
 );
 
-server.tool("get_revenue_summary", {}, async () => {
-  return textContent(await requestJSON(`${analyticsUrl}/summary`));
+server.tool("get_revenue_summary", { userAccessToken: z.string().min(20) }, async ({ userAccessToken }) => {
+  return textContent(await requestJSON(`${analyticsUrl}/summary`, { userAccessToken }));
 });
 
-server.tool("get_popular_routes", {}, async () => {
-  const summary = await requestJSON(`${analyticsUrl}/summary`);
+server.tool("get_popular_routes", { userAccessToken: z.string().min(20) }, async ({ userAccessToken }) => {
+  const summary = await requestJSON(`${analyticsUrl}/summary`, { userAccessToken });
   return textContent(summary.popularRoutes);
-});
-
-server.resource("popular_routes", "bus://routes/popular", async (uri) => {
-  const summary = await requestJSON(`${analyticsUrl}/summary`);
-  return {
-    contents: [{ uri: uri.href, text: JSON.stringify(summary.popularRoutes, null, 2) }]
-  };
 });
 
 server.resource("cancellation_policy", "bus://policy/cancellation", async (uri) => ({

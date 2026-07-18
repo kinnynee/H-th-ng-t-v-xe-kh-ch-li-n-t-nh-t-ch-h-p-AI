@@ -6,14 +6,37 @@ import {
   cancellationQuote,
   checkInTickets,
   createBookingLock,
+  seatReleaseCommand,
   transitionBooking
 } from "../services/booking-service/src/booking-domain.js";
 
-test("booking state machine rejects invalid transitions", () => {
+test("booking state machine owns the complete happy path and rejects invalid transitions", () => {
   const booking = { status: "PENDING_PAYMENT" };
-  transitionBooking(booking, "PAID", new Date("2026-07-17T00:00:00Z"));
+  const at = new Date("2026-07-17T00:00:00Z");
+  transitionBooking(booking, "PAYMENT_PROCESSING", at);
+  transitionBooking(booking, "PAID", at);
   assert.equal(booking.status, "PAID");
   assert.throws(() => transitionBooking(booking, "CHECKED_IN"), /Cannot transition/);
+  transitionBooking(booking, "TICKET_ISSUED", at);
+  transitionBooking(booking, "CHECKED_IN", at);
+  transitionBooking(booking, "COMPLETED", at);
+  assert.equal(booking.status, "COMPLETED");
+  assert.throws(() => transitionBooking(booking, "CANCELLED"), /Cannot transition/);
+});
+
+test("expiry and payment failure are terminal and generate the correct seat release command", () => {
+  const expired = {
+    code: "BK-EXPIRED", status: "PENDING_PAYMENT", tripId: "trip-1", seatIds: ["A01", "A02"], holdToken: "hold-1"
+  };
+  transitionBooking(expired, "EXPIRED", new Date("2026-07-17T00:00:00Z"));
+  assert.equal(expired.status, "EXPIRED");
+  assert.deepEqual(seatReleaseCommand(expired), {
+    tripId: "trip-1", seatIds: ["A01", "A02"], holdToken: "hold-1"
+  });
+  assert.throws(() => transitionBooking(expired, "PAID"), /Cannot transition/);
+
+  const paid = { ...expired, status: "PAID" };
+  assert.equal(seatReleaseCommand(paid).holdToken, "BK-EXPIRED");
 });
 
 test("cancellation policy calculates route refund and fee", () => {
@@ -30,6 +53,10 @@ test("cancellation policy calculates route refund and fee", () => {
     now: new Date("2026-07-18T04:00:00Z")
   });
   assert.equal(later.refundPercent, 60);
+  assert.throws(() => cancellationQuote({
+    status: "PENDING_PAYMENT", totalAmount: 1_000_000, departureTime,
+    cancellationPolicy: "Hủy miễn phí.", now: new Date("2026-07-18T12:00:01Z")
+  }), /after the trip has departed/);
 });
 
 test("one ticket can check in without checking in the whole booking", () => {

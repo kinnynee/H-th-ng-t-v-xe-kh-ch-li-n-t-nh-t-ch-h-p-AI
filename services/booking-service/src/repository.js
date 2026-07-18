@@ -35,6 +35,7 @@ function bookingFromRow(row) {
     paidAt: row.paid_at,
     checkedInAt: row.checked_in_at,
     cancelledAt: row.cancelled_at,
+    paymentIdempotencyKey: row.payment_idempotency_key,
     version: Number(row.version ?? 0)
   };
 }
@@ -47,7 +48,7 @@ function bookingParams(booking) {
     JSON.stringify(booking.seatIds), JSON.stringify(booking.passengers), booking.totalAmount, booking.status,
     booking.refundAmount ?? 0, booking.cancellationFee ?? 0, JSON.stringify(booking.tickets), booking.createdAt,
     booking.paymentExpiresAt ?? null, booking.updatedAt, booking.paidAt ?? null, booking.checkedInAt ?? null,
-    booking.cancelledAt ?? null
+    booking.cancelledAt ?? null, booking.paymentIdempotencyKey ?? null
   ];
 }
 
@@ -148,10 +149,11 @@ export async function createBookingWithOutbox(pool, booking, events = []) {
       `INSERT INTO bookings (
         code, trip_id, route_name, departure_time, pickup, dropoff, vehicle_plate, cancellation_policy, hold_token, guest_access_token_hash, guest_access_expires_at,
         customer_email, customer_phone, user_id, seat_ids, passengers, total_amount, status,
-        refund_amount, cancellation_fee, tickets, created_at, payment_expires_at, updated_at, paid_at, checked_in_at, cancelled_at
+        refund_amount, cancellation_fee, tickets, created_at, payment_expires_at, updated_at, paid_at, checked_in_at, cancelled_at,
+        payment_idempotency_key
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16::jsonb, $17, $18,
-        $19, $20, $21::jsonb, $22, $23, $24, $25, $26, $27
+        $19, $20, $21::jsonb, $22, $23, $24, $25, $26, $27, $28
       ) RETURNING version`,
       bookingParams(booking)
     );
@@ -174,8 +176,9 @@ export async function transitionBookingWithOutbox(pool, booking, expectedStatuse
       `UPDATE bookings
        SET status = $1, cancellation_policy = $2, guest_access_token_hash = $3, guest_access_expires_at = $4,
            refund_amount = $5, cancellation_fee = $6, tickets = $7::jsonb, payment_expires_at = $8,
-           updated_at = $9, paid_at = $10, checked_in_at = $11, cancelled_at = $12, version = version + 1
-       WHERE code = $13 AND version = $14 AND status = ANY($15::text[])
+           updated_at = $9, paid_at = $10, checked_in_at = $11, cancelled_at = $12,
+           payment_idempotency_key = $13, version = version + 1
+       WHERE code = $14 AND version = $15 AND status = ANY($16::text[])
        RETURNING version`,
       [
         booking.status,
@@ -190,6 +193,7 @@ export async function transitionBookingWithOutbox(pool, booking, expectedStatuse
         booking.paidAt ?? null,
         booking.checkedInAt ?? null,
         booking.cancelledAt ?? null,
+        booking.paymentIdempotencyKey ?? null,
         booking.code,
         Number(booking.version ?? 0),
         expectedStatuses

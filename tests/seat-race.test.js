@@ -142,6 +142,88 @@ test("retries a confirmed booking idempotently after its hold was consumed", asy
   })).ok, true);
 });
 
+test("retries the same hold request without creating a second hold", async () => {
+  const inventory = createSeatInventory({ cache: createMemoryTTLStore() });
+  const request = {
+    tripId: "trip-hcm-dalat-early",
+    seatIds: ["A01", "A02"],
+    customerEmail: "buyer@example.com",
+    idempotencyKey: "hold-request-retry",
+    ttlSeconds: 300
+  };
+
+  const first = await inventory.holdSeats(request);
+  const retry = await inventory.holdSeats(request);
+
+  assert.equal(first.ok, true);
+  assert.equal(retry.ok, true);
+  assert.equal(retry.holdToken, first.holdToken);
+  assert.deepEqual(retry.seatIds, first.seatIds);
+});
+
+test("a failed multi-seat hold rolls back every seat acquired by that request", async () => {
+  const inventory = createSeatInventory({ cache: createMemoryTTLStore() });
+  const tripId = "trip-hcm-dalat-early";
+  const existing = await inventory.holdSeats({
+    tripId,
+    seatIds: ["A02"],
+    customerEmail: "existing@example.com",
+    idempotencyKey: "existing-a02",
+    ttlSeconds: 300
+  });
+  assert.equal(existing.ok, true);
+
+  const competing = await inventory.holdSeats({
+    tripId,
+    seatIds: ["A01", "A02"],
+    customerEmail: "competitor@example.com",
+    idempotencyKey: "multi-seat-conflict",
+    ttlSeconds: 300
+  });
+  assert.equal(competing.ok, false);
+
+  const map = await inventory.getSeatMap(tripId);
+  assert.equal(map.seats.find((seat) => seat.id === "A01").status, "AVAILABLE");
+  assert.equal(map.seats.find((seat) => seat.id === "A02").holdToken, existing.holdToken);
+});
+
+test("rejects a wrong hold token and permits idempotent confirmation only for the owner", async () => {
+  const inventory = createSeatInventory({ cache: createMemoryTTLStore() });
+  const tripId = "trip-hcm-dalat-early";
+  const hold = await inventory.holdSeats({
+    tripId,
+    seatIds: ["A03"],
+    customerEmail: "buyer@example.com",
+    idempotencyKey: "confirm-token-check",
+    ttlSeconds: 300
+  });
+  assert.equal(hold.ok, true);
+
+  const wrongToken = await inventory.confirmSeats({
+    tripId,
+    seatIds: ["A03"],
+    holdToken: "wrong-hold-token",
+    bookingCode: "BK-TOKEN-CHECK"
+  });
+  assert.equal(wrongToken.ok, false);
+  assert.equal((await inventory.getSeatMap(tripId)).seats.find((seat) => seat.id === "A03").status, "HELD");
+
+  const firstConfirm = await inventory.confirmSeats({
+    tripId,
+    seatIds: ["A03"],
+    holdToken: hold.holdToken,
+    bookingCode: "BK-TOKEN-CHECK"
+  });
+  const retryConfirm = await inventory.confirmSeats({
+    tripId,
+    seatIds: ["A03"],
+    holdToken: hold.holdToken,
+    bookingCode: "BK-TOKEN-CHECK"
+  });
+  assert.equal(firstConfirm.ok, true);
+  assert.equal(retryConfirm.ok, true);
+});
+
 test("new trips receive the requested inventory and holds are verified", async () => {
   const persisted = [];
   const inventory = createSeatInventory({

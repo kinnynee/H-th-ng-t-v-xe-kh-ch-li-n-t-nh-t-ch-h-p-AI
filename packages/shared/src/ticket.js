@@ -42,6 +42,8 @@ export async function renderTicketHtml(booking) {
     return `
       <article class="ticket">
         <div class="ticket__details">
+          ${ticket.passengerPhone ? `<p><strong>Số điện thoại:</strong> ${escapeHtml(ticket.passengerPhone)}</p>` : ""}
+          ${ticket.passengerEmail ? `<p><strong>Email:</strong> ${escapeHtml(ticket.passengerEmail)}</p>` : ""}
           <p><strong>Họ tên hành khách:</strong> ${escapeHtml(ticket.passengerName)}</p>
           <p><strong>Mã vé:</strong> ${escapeHtml(ticket.id)}</p>
           <p><strong>Số ghế:</strong> ${escapeHtml(ticket.seatId)}</p>
@@ -125,6 +127,8 @@ export async function renderTicketPdf(booking) {
     document.font("Helvetica-Bold").fontSize(15).fillColor("#087f7a").text(`VE ${index + 1}`);
     document.fillColor("#172033").fontSize(11);
     writePdfField(document, "Ho ten hanh khach:", ticket.passengerName);
+    if (ticket.passengerPhone) writePdfField(document, "So dien thoai:", ticket.passengerPhone);
+    if (ticket.passengerEmail) writePdfField(document, "Email:", ticket.passengerEmail);
     writePdfField(document, "Ma ve:", ticket.id);
     writePdfField(document, "So ghe:", ticket.seatId);
     const qrPayload = ticketQrPayload(booking.code, ticket);

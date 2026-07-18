@@ -6,11 +6,18 @@ import { assertAuthConfiguration, authenticate, authorize } from "@bus-ai/shared
 import { createLogger, getLogContext, observeNodeRequest, registerProcessErrorHandlers, runWithLogContext } from "@bus-ai/shared/logger";
 import { createTicketQrDataUrl } from "@bus-ai/shared/ticket";
 import { createHealthCheck } from "./health.js";
+import { createFixedWindowRateLimiter, createGraphQLSecurityRule } from "./security.js";
 
 const tripUrl = process.env.TRIP_SERVICE_URL || "http://localhost:4010";
 const bookingUrl = process.env.BOOKING_SERVICE_URL || "http://localhost:4020";
 const aiUrl = process.env.AI_SERVICE_URL || "http://localhost:4100";
 const analyticsUrl = process.env.ANALYTICS_SERVICE_URL || "http://localhost:4050";
+const allowedOrigins = (process.env.GRAPHQL_ALLOWED_ORIGINS || "http://localhost,http://localhost:3000,http://localhost:3001")
+  .split(",").map((origin) => origin.trim()).filter(Boolean);
+const rateLimit = createFixedWindowRateLimiter({
+  limit: Math.max(10, Number(process.env.GRAPHQL_RATE_LIMIT || 120)),
+  windowMs: Math.max(1_000, Number(process.env.GRAPHQL_RATE_WINDOW_MS || 60_000))
+});
 
 const logger = createLogger("gateway");
 registerProcessErrorHandlers(logger);
@@ -319,6 +326,8 @@ const typeDefs = /* GraphQL */ `
   type Ticket {
     id: ID!
     passengerName: String!
+    passengerPhone: String
+    passengerEmail: String
     seatId: String!
     qrPayload: String!
     qrCodeDataUrl: String!
@@ -371,6 +380,12 @@ const typeDefs = /* GraphQL */ `
     seats: [Seat!]!
   }
 
+  type HoldVerification {
+    ok: Boolean!
+    message: String!
+    expiresIn: Int!
+  }
+
   type User {
     id: ID!
     email: String!
@@ -415,6 +430,7 @@ const typeDefs = /* GraphQL */ `
     answer: String!
     sources: [String!]!
     toolCalls: [String!]!
+    dataOrigin: String!
   }
 
   type Catalog {
@@ -442,15 +458,17 @@ const typeDefs = /* GraphQL */ `
     savedPassengers(userId: ID!): [SavedPassenger!]!
     adminSummary: AnalyticsSummary!
     eventLogs(limit: Int): [EventLog!]!
+    verifyHold(tripId: ID!, seatIds: [String!]!, holdToken: String!, customerEmail: String): HoldVerification!
   }
 
   type Mutation {
     holdSeats(tripId: ID!, seatIds: [String!]!, customerEmail: String, ttlSeconds: Int): HoldResult!
     createBooking(input: CreateBookingInput!): Booking!
     requestGuestBookingAccess(code: ID!, email: String!): GuestBookingAccess!
-    payBooking(code: ID!, success: Boolean!): Booking!
+    payBooking(code: ID!, success: Boolean!, idempotencyKey: String!): Booking!
     cancelBooking(code: ID!): Booking!
     checkIn(codeOrTicket: String!): Booking!
+    completeBooking(code: ID!): Booking!
     adminLogin(email: String!, password: String!): AuthPayload!
     login(email: String!, password: String!): AuthPayload!
     registerCustomer(input: RegisterCustomerInput!): AuthPayload!
@@ -526,7 +544,11 @@ const resolvers = {
     eventLogs: async (_parent, { limit = 20 }, context) => {
       const { authorization } = authenticatedHeaders(context, ["ADMIN", "STAFF"]);
       return (await requestJSON(`${analyticsUrl}/events?${qs({ limit })}`, { headers: { authorization } })).events;
-    }
+    },
+    verifyHold: async (_parent, args) => requestJSON(`${bookingUrl}/holds/verify`, {
+      method: "POST",
+      body: JSON.stringify(args)
+    })
   },
   Mutation: {
     holdSeats: async (_parent, args) => {
@@ -550,12 +572,16 @@ const resolvers = {
       `${bookingUrl}/bookings/${code}/guest-access`,
       { method: "POST", body: JSON.stringify({ email }) }
     ),
-    payBooking: async (_parent, { code, success }, context) => {
+    payBooking: async (_parent, { code, success, idempotencyKey }, context) => {
       const auth = context.user ? authenticatedHeaders(context) : { authorization: "" };
       const booking = (await requestJSON(`${bookingUrl}/bookings/${code}/pay`, {
         method: "POST",
-        headers: { ...bookingAccessHeaders(context), ...(auth.authorization ? { authorization: auth.authorization } : {}) },
-        body: JSON.stringify({ success })
+        headers: {
+          ...bookingAccessHeaders(context),
+          ...(auth.authorization ? { authorization: auth.authorization } : {}),
+          "idempotency-key": idempotencyKey
+        },
+        body: JSON.stringify({ success, idempotencyKey })
       })).booking;
       const map = await seatMap(booking.tripId);
       publishFallbackSeatChange({ tripId: booking.tripId, seats: map.seats, message: "Trạng thái ghế đã thay đổi." });
@@ -575,6 +601,14 @@ const resolvers = {
     checkIn: async (_parent, { codeOrTicket }, context) => {
       const { authorization } = authenticatedHeaders(context, ["ADMIN", "STAFF"]);
       return (await requestJSON(`${bookingUrl}/checkin`, { method: "POST", headers: { authorization }, body: JSON.stringify({ codeOrTicket }) })).booking;
+    },
+    completeBooking: async (_parent, { code }, context) => {
+      const { authorization } = authenticatedHeaders(context, ["ADMIN", "STAFF"]);
+      return (await requestJSON(`${bookingUrl}/bookings/${code}/complete`, {
+        method: "POST",
+        headers: { authorization },
+        body: JSON.stringify({})
+      })).booking;
     },
     adminLogin: async (_parent, input) => (await requestJSON(`${bookingUrl}/auth/admin-login`, {
       method: "POST",
@@ -702,12 +736,21 @@ const yoga = createYoga({
   schema: createSchema({ typeDefs, resolvers }),
   graphqlEndpoint: "/graphql",
   context: ({ request }) => graphQLAuth(request),
+  plugins: [{
+    onValidate({ addValidationRule }) {
+      addValidationRule(createGraphQLSecurityRule({
+        allowIntrospection: process.env.ALLOW_GRAPHQL_INTROSPECTION === "true"
+      }));
+    }
+  }],
+  graphiql: process.env.ENABLE_GRAPHIQL === "true",
   cors: {
-    origin: "*",
+    origin: allowedOrigins,
     credentials: false,
     allowedHeaders: ["content-type", "authorization", "x-booking-access-token"]
   },
-  maskedErrors: false
+  maskedErrors: true,
+  batching: { limit: 5 }
 });
 
 const grpcServer = await startGrpcServer({
@@ -720,6 +763,17 @@ const server = createServer((req, res) => {
   const requestId = observeNodeRequest(logger, req, res);
   return runWithLogContext({ requestId }, () => {
     const pathname = new URL(req.url || "/", "http://localhost").pathname;
+    if (pathname === "/graphql") {
+      const clientKey = req.socket.remoteAddress || "unknown";
+      const result = rateLimit(clientKey);
+      res.setHeader("x-ratelimit-remaining", String(result.remaining));
+      res.setHeader("x-ratelimit-reset", String(Math.ceil(result.resetAt / 1000)));
+      if (!result.allowed) {
+        res.writeHead(429, { "content-type": "application/json", "retry-after": String(Math.max(1, Math.ceil((result.resetAt - Date.now()) / 1000))) });
+        res.end(JSON.stringify({ errors: [{ message: "Too many GraphQL requests. Please retry later." }] }));
+        return;
+      }
+    }
     if (req.method === "GET" && pathname === "/live") {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: true, service: "gateway", status: "LIVE", requestId }));

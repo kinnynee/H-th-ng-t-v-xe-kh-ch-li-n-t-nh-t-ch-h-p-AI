@@ -25,6 +25,13 @@ mutation Hold($tripId: ID!, $seatIds: [String!]!, $customerEmail: String, $ttlSe
   }
 }`;
 
+const VERIFY_HOLD = `
+query VerifyHold($tripId: ID!, $seatIds: [String!]!, $holdToken: String!, $customerEmail: String) {
+  verifyHold(tripId: $tripId, seatIds: $seatIds, holdToken: $holdToken, customerEmail: $customerEmail) {
+    ok message expiresIn
+  }
+}`;
+
 const CREATE = `
 mutation CreateBooking($input: CreateBookingInput!) {
   createBooking(input: $input) {
@@ -33,12 +40,29 @@ mutation CreateBooking($input: CreateBookingInput!) {
 }`;
 
 const PAY = `
-mutation Pay($code: ID!, $success: Boolean!) {
-  payBooking(code: $code, success: $success) {
+mutation Pay($code: ID!, $success: Boolean!, $idempotencyKey: String!) {
+  payBooking(code: $code, success: $success, idempotencyKey: $idempotencyKey) {
     code status totalAmount customerEmail ticketHtmlUrl ticketPdfUrl
-    tickets { id passengerName seatId qrPayload qrCodeDataUrl issuedAt status checkedInAt }
+    tickets { id passengerName passengerPhone passengerEmail seatId qrPayload qrCodeDataUrl issuedAt status checkedInAt }
   }
 }`;
+
+function holdStorageKey(tripId) {
+  return `busSeatHold:${tripId}`;
+}
+
+function clearStoredHold(tripId) {
+  sessionStorage.removeItem(holdStorageKey(tripId));
+}
+
+function readStoredHold(tripId) {
+  try {
+    return JSON.parse(sessionStorage.getItem(holdStorageKey(tripId)) || "null");
+  } catch {
+    clearStoredHold(tripId);
+    return null;
+  }
+}
 
 const SAVED_PASSENGERS = `
 query SavedPassengers($userId: ID!) {
@@ -90,6 +114,7 @@ export default function TripDetail() {
   const [error, setError] = useState("");
   const [nowMs, setNowMs] = useState(null);
   const passengerFormRef = useRef(null);
+  const paymentIdempotencyKeyRef = useRef("");
 
   const selectedSeats = useMemo(() => selected.join(", "), [selected]);
   const tripDeparted = nowMs !== null && Date.parse(trip?.departureTime) <= nowMs;
@@ -101,6 +126,32 @@ export default function TripDetail() {
 
   useEffect(() => {
     load().catch((err) => setError(err.message));
+  }, [tripId]);
+
+  useEffect(() => {
+    const stored = readStoredHold(tripId);
+    if (!stored?.holdToken || !Array.isArray(stored.seatIds) || stored.seatIds.length === 0) return;
+    const localRemaining = Math.ceil((Number(stored.expiresAt) - Date.now()) / 1000);
+    if (localRemaining <= 0) {
+      clearStoredHold(tripId);
+      return;
+    }
+    gql(VERIFY_HOLD, {
+      tripId,
+      seatIds: stored.seatIds,
+      holdToken: stored.holdToken,
+      customerEmail: stored.customer?.email || ""
+    }).then((data) => {
+      if (!data.verifyHold.ok || data.verifyHold.expiresIn <= 0) {
+        clearStoredHold(tripId);
+        return;
+      }
+      setSelected(stored.seatIds);
+      setCustomer(stored.customer ?? { email: "guest@example.com", phone: "0909000000" });
+      setPassengers(stored.passengers ?? {});
+      setHold({ ok: true, holdToken: stored.holdToken, expiresIn: data.verifyHold.expiresIn, message: data.verifyHold.message });
+      setHoldRemaining(Math.min(localRemaining, data.verifyHold.expiresIn));
+    }).catch(() => clearStoredHold(tripId));
   }, [tripId]);
 
   useEffect(() => {
@@ -127,6 +178,7 @@ export default function TripDetail() {
         if (current <= 1) {
           clearInterval(timer);
           setHold(null);
+          clearStoredHold(tripId);
           setSelected([]);
           setPassengers({});
           setError("Thời gian giữ ghế đã hết hạn. Vui lòng chọn lại ghế.");
@@ -138,6 +190,17 @@ export default function TripDetail() {
     }, 1000);
     return () => clearInterval(timer);
   }, [hold?.ok]);
+
+  useEffect(() => {
+    if (!hold?.ok || !hold.holdToken || holdRemaining <= 0) return;
+    sessionStorage.setItem(holdStorageKey(tripId), JSON.stringify({
+      holdToken: hold.holdToken,
+      seatIds: selected,
+      customer,
+      passengers,
+      expiresAt: Date.now() + holdRemaining * 1000
+    }));
+  }, [tripId, hold?.ok, hold?.holdToken, holdRemaining, selected, customer, passengers]);
 
   useEffect(() => {
     if (booking?.status !== "PENDING_PAYMENT" || !booking.paymentExpiresAt) return;
@@ -218,7 +281,18 @@ export default function TripDetail() {
         };
       });
       setPassengers(next);
-      if (!data.holdSeats.ok) setError(data.holdSeats.message);
+      if (!data.holdSeats.ok) {
+        clearStoredHold(tripId);
+        setError(data.holdSeats.message);
+      } else {
+        sessionStorage.setItem(holdStorageKey(tripId), JSON.stringify({
+          holdToken: data.holdSeats.holdToken,
+          seatIds: selected,
+          customer,
+          passengers: next,
+          expiresAt: Date.now() + data.holdSeats.expiresIn * 1000
+        }));
+      }
     } catch (err) {
       setError(bookingErrorMessage(err));
     } finally {
@@ -274,6 +348,8 @@ export default function TripDetail() {
       storeBookingAccessToken(data.createBooking.code, data.createBooking.guestAccessToken);
       setBooking(data.createBooking);
       setHold(null);
+      clearStoredHold(tripId);
+      paymentIdempotencyKeyRef.current = crypto.randomUUID();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -289,7 +365,12 @@ export default function TripDetail() {
     setBusy(true);
     setError("");
     try {
-      const data = await gql(PAY, { code: booking.code, success }, { bookingCode: booking.code });
+      if (!paymentIdempotencyKeyRef.current) paymentIdempotencyKeyRef.current = crypto.randomUUID();
+      const data = await gql(PAY, {
+        code: booking.code,
+        success,
+        idempotencyKey: paymentIdempotencyKeyRef.current
+      }, { bookingCode: booking.code });
       setBooking((current) => ({ ...data.payBooking, guestAccessToken: current?.guestAccessToken }));
       setHold(null);
       setPaymentRemaining(0);
@@ -541,6 +622,8 @@ export default function TripDetail() {
                         </span>
                         <h3>{ticket.id}</h3>
                         <p>{ticket.passengerName}, ghế {ticket.seatId}</p>
+                        {ticket.passengerPhone && <p>{ticket.passengerPhone}</p>}
+                        {ticket.passengerEmail && <p>{ticket.passengerEmail}</p>}
                         <img className="ticket-qr-code" src={ticket.qrCodeDataUrl} alt={`QR check-in ${ticket.id}`} width="160" height="160" />
                         <p className="muted">Mã QR check-in: {ticket.qrPayload}</p>
                       </div>

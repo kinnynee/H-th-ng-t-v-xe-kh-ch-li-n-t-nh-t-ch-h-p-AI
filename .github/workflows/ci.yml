@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run all automated tests
+        run: npm test
+
+      - name: Repeat seat concurrency tests
+        run: npm run test:seat-race:repeat
+
+      - name: Build web application
+        run: npm run build -w apps/web
+
+      - name: Validate Docker Compose configuration
+        run: npm run docker:config

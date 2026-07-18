@@ -20,6 +20,8 @@
     "db:migrate": "node scripts/db-tasks.js migrate",
     "db:seed": "node scripts/db-tasks.js seed",
     "test": "node --test tests/*.test.js",
+    "test:seat-race": "node --test tests/seat-race.test.js tests/seat-race-stress.test.js",
+    "test:seat-race:repeat": "node scripts/repeat-seat-race-tests.js",
     "start:mcp": "npm run start -w services/mcp-server"
   },
   "devDependencies": {
