@@ -13,8 +13,7 @@ data/email-log.jsonl
 data/analytics.json
 *.log
 
-# Retired assignment documentation; do not re-add these files.
-/README.md
+# Member assignment documents (kept if needed)
 /README_Trung_Kien.md
 /README_Viet_Khai.md
 /README_Xuan_Hung.md
