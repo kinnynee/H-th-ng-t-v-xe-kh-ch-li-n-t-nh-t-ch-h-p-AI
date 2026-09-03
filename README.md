@@ -1,10 +1,10 @@
-# 🚌 Hệ Thống Đặt Vé Xe Khách Liên Tỉnh Tích Hợp AI (Bus AI Ticketing)
+# Hệ Thống Đặt Vé Xe Khách Liên Tỉnh Tích Hợp AI (Bus AI Ticketing)
 
 > **Đồ án môn học / Dự án tốt nghiệp**: Xây dựng hệ thống phân tán đặt vé xe khách liên tỉnh quy mô lớn, tích hợp trợ lý ảo AI, kiến trúc Microservices, GraphQL Gateway (BFF), gRPC Service-to-Service, Redis Distributed Locks (TTL Hold), RabbitMQ & Apache Kafka Event-Driven Architecture, PostgreSQL (Database-per-service), Nginx Reverse Proxy và Model Context Protocol (MCP) Server.
 
 ---
 
-## 👥 Bảng Phân Công & Chi Tiết Đóng Góp Của Các Thành Viên
+## Bảng Phân Công & Chi Tiết Đóng Góp Của Các Thành Viên
 
 | STT | Thành Viên | Vai Trò Chính | Module / Trách Nhiệm Phụ Trách | Mức Độ Hoàn Thành |
 |:---:|---|---|---|:---:|
@@ -14,7 +14,7 @@
 
 ---
 
-### 1. 👤 Trần Trung Kiên — Frontend & Trải Nghiệm Khách Hàng (Customer Experience)
+### 1. Trần Trung Kiên — Frontend & Trải Nghiệm Khách Hàng (Customer Experience)
 
 * **Vai trò**: Phụ trách toàn bộ giao diện phía khách hàng trên nền tảng **Next.js 15 (App Router)**, tối ưu UI/UX, tương tác thời gian thực và trải nghiệm người dùng cuối.
 * **Các module & tính năng đã thực hiện**:
@@ -44,7 +44,7 @@
 
 ---
 
-### 2. 👤 Xuân Hưng — Backend Core, Nghiệp Vụ Đặt Vé & Xử Lý Đồng Thời (Concurrency)
+### 2. Xuân Hưng — Backend Core, Nghiệp Vụ Đặt Vé & Xử Lý Đồng Thời (Concurrency)
 
 * **Vai trò**: Phụ trách logic nghiệp vụ lõi (Core Business Logic), quản lý vòng đời đặt vé, kiểm soát tồn kho ghế theo thời gian thực và giải quyết bài toán xung đột tranh chấp ghế (Race Condition).
 * **Các module & tính năng đã thực hiện**:
@@ -75,7 +75,7 @@
 
 ---
 
-### 3. 👤 Việt Khải — Fullstack, AI Chatbot, Event-Driven Architecture & DevOps Lead
+### 3. Việt Khải — Fullstack, AI Chatbot, Event-Driven Architecture & DevOps Lead
 
 * **Vai trò**: Phụ trách phát triển Cổng Quản trị (Admin Portal), Tích hợp Trợ lý Trí tuệ Nhân tạo (AI Chatbot), Model Context Protocol (MCP) Server, GraphQL Gateway, Hệ thống Worker xử lý sự kiện bất đồng bộ, Kiến trúc Container Docker và Bộ tài liệu kỹ thuật.
 * **Các module & tính năng đã thực hiện**:
@@ -110,7 +110,7 @@
 
 ---
 
-## 🏛️ Sơ Đồ Kiến Trúc Hệ Thống (Architecture Diagram)
+## Sơ Đồ Kiến Trúc Hệ Thống (Architecture Diagram)
 
 ```mermaid
 flowchart TB
@@ -182,7 +182,7 @@ flowchart TB
 
 ---
 
-## 🛠️ Công Nghệ Sử Dụng (Tech Stack)
+## Công Nghệ Sử Dụng (Tech Stack)
 
 * **Frontend**: Next.js 15 (App Router), React 19, Vanilla CSS Design System, Lucide Icons, QRCode SVG.
 * **API Gateway & Protocol**: GraphQL (Apollo Server/Yoga BFF), gRPC (`@grpc/grpc-js`, `@grpc/proto-loader`), Server-Sent Events (SSE), RESTful APIs.
@@ -194,7 +194,7 @@ flowchart TB
 
 ---
 
-## 🌐 Danh Sách Cổng Kết Nối & Endpoints Mặc Định
+## Danh Sách Cổng Kết Nối & Endpoints Mặc Định
 
 | Thành Phần | Giao Thức / Loại | Cổng Mặc Định (Port) | Đường Dẫn / URL |
 |---|:---:|:---:|---|
@@ -213,7 +213,7 @@ flowchart TB
 
 ---
 
-## 🚀 Hướng Dẫn Cài Đặt & Khởi Chạy
+## Hướng Dẫn Cài Đặt & Khởi Chạy
 
 ### 1. Yêu cầu môi trường
 * **Node.js**: Phiên bản `>= 20.x` (Khuyến nghị Node.js 22 LTS).
@@ -268,7 +268,7 @@ npm run dev
 
 ---
 
-## 🧪 Kiểm Thử Hệ Thống (Testing & Concurrency Verification)
+## Kiểm Thử Hệ Thống (Testing & Concurrency Verification)
 
 Hệ thống được trang bị bộ test tự động toàn diện với hơn 70 kịch bản kiểm thử:
 
@@ -290,7 +290,7 @@ npm run test:seat-race:repeat
 
 ---
 
-## 🔑 Tài Khoản Demo Hệ Thống
+## Tài Khoản Demo Hệ Thống
 
 | Vai Trò | Email Đăng Nhập | Mật Khẩu | Quyền Hạn |
 |---|---|---|---|
@@ -301,7 +301,7 @@ npm run test:seat-race:repeat
 
 ---
 
-## 🤖 Khởi Chạy Model Context Protocol (MCP) Server
+## Khởi Chạy Model Context Protocol (MCP) Server
 
 Để kết nối hệ thống với các ứng dụng AI như Claude Desktop, Antigravity hoặc Cursor:
 
@@ -318,10 +318,10 @@ npm run start:mcp
 
 ---
 
-## 📚 Tài Liệu Kỹ Thuật Chi Tiết (Documentation)
+## Tài Liệu Kỹ Thuật Chi Tiết (Documentation)
 
-* 📄 [Kiến Trúc Backend & Luồng Dữ Liệu](file:///d:/khai/H-th-ng-t-v-xe-kh-ch-li-n-t-nh-t-ch-h-p-AI/docs/backend-architecture.md)
-* 📄 [Đảm Bảo Tính Chất ACID & Concurrency Guarantees](file:///d:/khai/H-th-ng-t-v-xe-kh-ch-li-n-t-nh-t-ch-h-p-AI/docs/acid-guarantees.md)
-* 📄 [Bảng Đối Chiếu Yêu Cầu Đề Tài](file:///d:/khai/H-th-ng-t-v-xe-kh-ch-li-n-t-nh-t-ch-h-p-AI/docs/requirements-traceability.md)
-* 📄 [Runbook Vận Hành & Khắc Phục Sự Cố](file:///d:/khai/H-th-ng-t-v-xe-kh-ch-li-n-t-nh-t-ch-h-p-AI/docs/RUNBOOK.md)
-* 📄 [Kế Hoạch & Mốc Phát Triển Dự Án](file:///d:/khai/H-th-ng-t-v-xe-kh-ch-li-n-t-nh-t-ch-h-p-AI/docs/PROJECT_PLAN.md)
+* [Kiến Trúc Backend & Luồng Dữ Liệu](file:///d:/khai/H-th-ng-t-v-xe-kh-ch-li-n-t-nh-t-ch-h-p-AI/docs/backend-architecture.md)
+* [Đảm Bảo Tính Chất ACID & Concurrency Guarantees](file:///d:/khai/H-th-ng-t-v-xe-kh-ch-li-n-t-nh-t-ch-h-p-AI/docs/acid-guarantees.md)
+* [Bảng Đối Chiếu Yêu Cầu Đề Tài](file:///d:/khai/H-th-ng-t-v-xe-kh-ch-li-n-t-nh-t-ch-h-p-AI/docs/requirements-traceability.md)
+* [Runbook Vận Hành & Khắc Phục Sự Cố](file:///d:/khai/H-th-ng-t-v-xe-kh-ch-li-n-t-nh-t-ch-h-p-AI/docs/RUNBOOK.md)
+* [Kế Hoạch & Mốc Phát Triển Dự Án](file:///d:/khai/H-th-ng-t-v-xe-kh-ch-li-n-t-nh-t-ch-h-p-AI/docs/PROJECT_PLAN.md)
